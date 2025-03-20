@@ -180,3 +180,6 @@ Otolits_identyfication_program/YOLO/datasets/turbot_dataset
 Otolits_identyfication_program/YOLO/datasets/turbot_images
 Picks_modification_scripts/TUR_resized
 runs
+Otolits_identyfication_program/YOLO/yolo11l.pt
+Otolits_identyfication_program/YOLO/yolo11n.pt
+Otolits_identyfication_program/YOLO/yolo11x.pt
