@@ -173,7 +173,7 @@ cython_debug/
 # PyPI configuration file
 .pypirc
 
-# Picturec directories
+# Project directories (pictures models etc)
 
 Otolits_identyfication_program/test_images
 Otolits_identyfication_program/YOLO/datasets/turbot_dataset
@@ -183,3 +183,4 @@ runs
 Otolits_identyfication_program/YOLO/yolo11l.pt
 Otolits_identyfication_program/YOLO/yolo11n.pt
 Otolits_identyfication_program/YOLO/yolo11x.pt
+
