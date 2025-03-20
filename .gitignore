@@ -172,3 +172,11 @@ cython_debug/
 
 # PyPI configuration file
 .pypirc
+
+# Picturec directories
+
+Otolits_identyfication_program/test_images
+Otolits_identyfication_program/YOLO/datasets/turbot_dataset
+Otolits_identyfication_program/YOLO/datasets/turbot_images
+Picks_modification_scripts/TUR_resized
+runs
