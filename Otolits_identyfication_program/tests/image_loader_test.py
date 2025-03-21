@@ -81,6 +81,9 @@ class TestImageLoader(unittest.TestCase):
         self.assertAlmostEqual(actual_scale, expected_scale, places=3,
                                msg=f"Zapisana skala ({actual_scale}) nie zgadza się z oczekiwaną ({expected_scale})")
 
+        print(f"\n✅ Przeskalowanie obrazu: {original_w}x{original_h} -> {resized_w}x{resized_h}")
+        print(f"📏 Oczekiwana skala: {expected_scale:.3f}, Zapisana skala: {actual_scale:.3f}")
+
 
 if __name__ == "__main__":
     unittest.main()
