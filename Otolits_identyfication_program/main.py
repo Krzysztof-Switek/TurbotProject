@@ -7,7 +7,7 @@ from Otolits_identyfication_program.gui import GUI
 
 
 if __name__ == "__main__":
-    image_loader = ImageLoader("Otolits_identyfication_program/test_images")
+    image_loader = ImageLoader("test_images")
     bbox_manager = BoundingBoxManager()
     row_manager = RowManager()
     input_handler = InputHandler(bbox_manager, row_manager)
