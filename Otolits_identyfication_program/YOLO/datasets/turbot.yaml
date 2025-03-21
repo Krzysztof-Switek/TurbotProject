@@ -1,4 +1,6 @@
-path: C:\Users\kswitek\Documents\TurbotProject\Otolits_identyfication_program\YOLO\datasets\turbot_dataset
+# path: C:\Users\kswitek\Documents\TurbotProject\Otolits_identyfication_program\YOLO\datasets\turbot_dataset
+
+path: /home/kswitek/Documents/TurbotProject/Otolits_identyfication_program/YOLO/datasets/turbot_dataset
 
 train: images/train
 val: images/val
@@ -6,3 +8,4 @@ test: images/test
 
 nc: 1  # Liczba klas
 names: ['Otolit']  # Nazwa klasy
+
