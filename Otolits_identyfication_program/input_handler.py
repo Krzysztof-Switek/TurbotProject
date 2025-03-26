@@ -1,6 +1,8 @@
 from enum import Enum, auto
 import cv2
 import sys
+from row_detector import RowEditMode
+
 
 class Mode(Enum):
     AUTO = auto()  # Tryb automatyczny (domyślny)
@@ -9,10 +11,11 @@ class Mode(Enum):
     RESIZE = auto()  # Zmiana rozmiaru boxów
     DELETE = auto()  # Usuwanie boxów
 
+
 class InputHandler:
     def __init__(self, bounding_box_manager, row_manager):
         self.bbox_manager = bounding_box_manager
-        self.row_manager = row_manager
+        self.row_detector = row_manager
         self.mode = Mode.AUTO
         self.start_pos = None
         self.current_pos = None
@@ -45,6 +48,31 @@ class InputHandler:
                 cv2.destroyAllWindows()
                 sys.exit()
             return self.set_mode(key_to_mode[key])
+
+        # Obsługa trybów edycji wierszy
+        if not hasattr(self.row_detector, 'edit_mode'):
+            return False
+
+        try:
+            if key == ord('1'):  # Tryb przesuwania wierszy
+                self.row_detector.edit_mode = RowEditMode.MOVE
+                return True
+            elif key == ord('2'):  # Tryb obracania wierszy
+                self.row_detector.edit_mode = RowEditMode.ROTATE
+                return True
+            elif key == ord('3'):  # Tryb dodawania wierszy
+                self.row_detector.edit_mode = RowEditMode.ADD
+                return True
+            elif key == ord('4'):  # Tryb usuwania wierszy
+                self.row_detector.edit_mode = RowEditMode.DELETE
+                return True
+            elif key == ord('0'):  # Wyłącz edycję wierszy
+                self.row_detector.edit_mode = RowEditMode.NONE
+                return True
+        except Exception as e:
+            print(f"Błąd zmiany trybu wierszy: {e}")
+            return False
+
         return False
 
     def reset(self):

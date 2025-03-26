@@ -2,7 +2,7 @@ import cv2
 import sys
 from input_handler import Mode
 from bounding_box_manager import BoundingBoxManager
-from row_detector import RowDetector
+from row_detector import RowDetector, RowEditMode
 
 class ImageWindow:
     def __init__(self, image_loader, bbox_manager, input_handler):
@@ -12,6 +12,7 @@ class ImageWindow:
         self.current_image = None
         self.temp_image = None
         self.row_detector = RowDetector(bbox_manager)
+        self.input_handler.row_detector = self.row_detector
 
     def _prepare_display_image(self):
         """Przygotowanie obrazu do wyświetlenia"""
@@ -97,7 +98,13 @@ class ImageWindow:
             print(f"Nieprawidłowe współrzędne myszy: x={x}, y={y}")
             return
 
-        # Tryb DELETE
+        # Najpierw sprawdź tryb edycji wierszy
+        if self.row_detector.edit_mode != RowEditMode.NONE:
+            if self.row_detector.handle_mouse_event(event, x, y):
+                self.update_display()
+            return
+
+        # Następnie sprawdź tryby związane z bounding boxami
         if self.input_handler.mode == Mode.DELETE and event == cv2.EVENT_LBUTTONDOWN:
             box = self.bbox_manager.get_box_at(x, y, tolerance=5)
             if box:
@@ -217,11 +224,12 @@ class ImageWindow:
 
         # Obsługa prawego kliknięcia myszki
         if event == cv2.EVENT_RBUTTONDOWN:
-            if len(self.bbox_manager.boxes) >= 2:  # Wymagamy co najmniej 2 boxy
-                self.row_detector.detect_rows()
-                self.update_display()
-            else:
-                print("Wymagane są co najmniej 2 bounding boxy do wykrycia wierszy")
+            if self.input_handler.mode == Mode.MANUAL:
+                try:
+                    self.row_detector.detect_rows()
+                    self.update_display()
+                except Exception as e:
+                    print(f"Błąd wykrywania wierszy: {e}")
 
     def _handle_next_image(self):
         """Obsługa przejścia do następnego obrazu z resetem do trybu AUTO"""
