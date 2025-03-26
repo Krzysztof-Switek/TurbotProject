@@ -30,20 +30,42 @@ class InputHandler:
             raise ValueError("Nieprawidłowy tryb pracy")
 
     def mouse_callback(self, event, x, y, flags, param):
-        """Obsługa zdarzeń myszy z podglądem boxa"""
+        """Obsługa zdarzeń myszy z płynnym podglądem"""
         image = param['image'] if param and 'image' in param else None
 
         if event == cv2.EVENT_LBUTTONDOWN:
-            self._handle_left_click(x, y)
-            self.temp_image = image.copy()  # Zapamiętaj obraz do podglądu
+            self.start_pos = (x, y)
+            self.drawing = True
+            self.temp_image = image.copy()  # Zachowaj oryginalny obraz
+
         elif event == cv2.EVENT_MOUSEMOVE:
             if self.drawing and self.mode == Mode.MANUAL:
-                # Podgląd boxa podczas przeciągania
+                # Przygotuj obraz z istniejącymi boxami + podglądem nowego
                 display_image = self.temp_image.copy()
-                cv2.rectangle(display_image, self.start_pos, (x, y), (0, 255, 0), 2)
+
+                # 1. Narysuj wszystkie istniejące boxy
+                for box in self.bbox_manager.boxes:
+                    cv2.rectangle(display_image,
+                                  (box.x1, box.y1),
+                                  (box.x2, box.y2),
+                                  (0, 255, 0), 2)
+
+                # 2. Dodaj podgląd aktualnie rysowanego boxa (czerwony)
+                cv2.rectangle(display_image,
+                              self.start_pos,
+                              (x, y),
+                              (0, 0, 255), 2)
+
                 cv2.imshow("Otolith Annotation Tool", display_image)
+
         elif event == cv2.EVENT_LBUTTONUP:
-            self._handle_left_release(x, y, image)
+            if self.drawing and self.mode == Mode.MANUAL:
+                x1, x2 = sorted([self.start_pos[0], x])
+                y1, y2 = sorted([self.start_pos[1], y])
+                if abs(x2 - x1) > 10 and abs(y2 - y1) > 10:
+                    self.bbox_manager.add_box(x1, y1, x2, y2)
+            self.drawing = False
+            self._update_display(image)  # Odśwież końcowy obraz
 
     def _handle_left_click(self, x, y):
         self.start_pos = (x, y)
