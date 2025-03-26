@@ -1,46 +1,64 @@
+import numpy as np
+import cv2
+from bounding_box import BoundingBox
+
 class BoundingBoxManager:
-    def __init__(self):
-        self.boxes = []  # Lista przechowująca współrzędne boxów
+    def __init__(self, image_shape):
+        self.boxes = []
+        self.box_layer = np.zeros((*image_shape[:2], 4), dtype=np.uint8)  # Warstwa RGBA
 
-    def add_box(self, x1, y1, x2, y2):
-        """Dodaje nowy box do listy"""
-        self.boxes.append((x1, y1, x2, y2))
+    def add_box(self, x1, y1, x2, y2, label=None):
+        new_box = BoundingBox(x1, y1, x2, y2, label)
+        self.boxes.append(new_box)
+        self.update_box_layer()
+        return new_box
 
-    def remove_box(self, x, y):
-        """Usuwa box, jeśli kliknięto w jego obrębie"""
-        for box in self.boxes:
-            x1, y1, x2, y2 = box
-            if x1 <= x <= x2 and y1 <= y <= y2:
-                self.boxes.remove(box)
-                break
+    def remove_box(self, box):
+        if box in self.boxes:
+            self.boxes.remove(box)
+            self.update_box_layer()
 
-    def edit_box(self, index, new_x1, new_y1, new_x2, new_y2):
-        """Edytuje istniejący box"""
-        if 0 <= index < len(self.boxes):
-            self.boxes[index] = (new_x1, new_y1, new_x2, new_y2)
+    def update_box(self, box, x1, y1, x2, y2):
+        if box not in self.boxes:
+            raise ValueError("Box nie istnieje w managerze")
+        box.update(x1, y1, x2, y2)
+        self.update_box_layer()
 
     def get_boxes(self):
-        """Zwraca listę boxów"""
-        return self.boxes
+        return self.boxes.copy()  # Zwracamy kopię dla bezpieczeństwa
 
+    def get_box_at(self, x, y, tolerance=5):
+        for box in reversed(self.boxes):
+            if box.contains(x, y, tolerance):
+                return box
+        return None
 
-############## TESTY ##############
+    def update_box_layer(self, opacity=0.5):
+        self.box_layer.fill(0)
+        for box in self.boxes:
+            color = (0, 255, 0, int(255*opacity))
+            cv2.rectangle(self.box_layer,
+                         (box.x1, box.y1),
+                         (box.x2, box.y2),
+                         color, 2)
 
-if __name__ == "__main__":
-    manager = BoundingBoxManager()
+    def get_box_layer(self):
+        return self.box_layer
 
-    # Test dodawania boxów
-    manager.add_box(10, 10, 50, 50)
-    manager.add_box(60, 60, 100, 100)
-    assert len(manager.get_boxes()) == 2
-    print("✅ Dodawanie boxów działa poprawnie!")
+    def clear_all(self):
+        self.boxes = []
+        self.update_box_layer()
 
-    # Test usuwania boxów
-    manager.remove_box(15, 15)  # Wewnątrz pierwszego boxa
-    assert len(manager.get_boxes()) == 1
-    print("✅ Usuwanie boxów działa poprawnie!")
+    def get_boxes_sorted(self, by='area', reverse=False):
+        return sorted(self.boxes,
+                     key=lambda b: getattr(b, by)(),
+                     reverse=reverse)
 
-    # Test edycji boxów
-    manager.edit_box(0, 70, 70, 120, 120)
-    assert manager.get_boxes()[0] == (70, 70, 120, 120)
-    print("✅ Edycja boxów działa poprawnie!")
+    def to_list(self):
+        return [box.to_dict() for box in self.boxes]
+
+    def from_list(self, boxes_data):
+        self.clear_all()
+        for data in boxes_data:
+            self.boxes.append(BoundingBox.from_dict(data))
+        self.update_box_layer()
