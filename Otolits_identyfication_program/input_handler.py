@@ -47,3 +47,12 @@ class InputHandler:
             return self.set_mode(key_to_mode[key])
         return False
 
+    def reset(self):
+        """Resetuje stan handlera do domyślnego"""
+        self.mode = Mode.AUTO
+        self.start_pos = None
+        self.current_pos = None
+        self.drawing = False
+        self.selected_box = None
+        self.drag_offset = None
+        print("Zresetowano do trybu AUTO")

@@ -205,14 +205,38 @@ class ImageWindow:
                 self.update_display()
 
     def _handle_next_image(self):
-        """Obsługa przejścia do następnego obrazu"""
+        """Obsługa przejścia do następnego obrazu z resetem do trybu AUTO"""
         next_image = self.image_loader.next_image()
         if next_image is not None:
             self.current_image = next_image
             self.bbox_manager = BoundingBoxManager(self.current_image.shape)
             self.input_handler.bbox_manager = self.bbox_manager
+            self.input_handler.set_mode(Mode.AUTO)  # Reset do trybu AUTO
+
             print(f"Nowy obraz - kształt: {self.current_image.shape}, typ: {self.current_image.dtype}")
+
+            # Tutaj dodaj automatyczne wykrywanie obiektów w trybie AUTO
+            self._auto_detect_objects()
+
             self.update_display()
         else:
             print("To już ostatnie zdjęcie.")
+
+    def _auto_detect_objects(self):
+        """Automatyczne wykrywanie obiektów w trybie AUTO"""
+        if self.input_handler.mode == Mode.AUTO:
+            # Tutaj implementacja automatycznego wykrywania obiektów
+            # Przykładowe wykrywanie - w rzeczywistości użyj swojego algorytmu
+            height, width = self.current_image.shape[:2]
+
+            # Przykładowe wykrycie 2 obiektów (do zastąpienia rzeczywistym algorytmem)
+            sample_boxes = [
+                (width // 4, height // 4, width // 2, height // 2),
+                (3 * width // 5, height // 3, 4 * width // 5, 2 * height // 3)
+            ]
+
+            for x1, y1, x2, y2 in sample_boxes:
+                self.bbox_manager.add_box(x1, y1, x2, y2)
+
+            print(f"Automatycznie wykryto {len(sample_boxes)} obiektów")
 
