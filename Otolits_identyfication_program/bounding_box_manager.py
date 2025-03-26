@@ -16,8 +16,8 @@ class BoundingBoxManager:
     def remove_box(self, box):
         if box in self.boxes:
             self.boxes.remove(box)
-            self.update_box_layer()
             print(f"Usunięto box: {box}")
+            print(f"Aktualna liczba boxów: {len(self.boxes)}")
         else:
             print("Błąd: Box nie istnieje")
 

@@ -36,7 +36,14 @@ class InputHandler:
         if event == cv2.EVENT_LBUTTONDOWN:
             self.start_pos = (x, y)
             self.drawing = True
-            self.temp_image = image.copy()  # Zachowaj oryginalny obraz
+
+            if self.mode == Mode.DELETE:
+                box = self.bbox_manager.get_box_at(x, y, tolerance=5)
+                if box:
+                    self.bbox_manager.remove_box(box)
+                    self._update_display(image)
+            elif self.mode == Mode.MANUAL:
+                self.temp_image = image.copy()  # Zachowaj oryginalny obraz
 
         elif event == cv2.EVENT_MOUSEMOVE:
             if self.drawing and self.mode == Mode.MANUAL:

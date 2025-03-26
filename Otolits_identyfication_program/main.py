@@ -1,10 +1,53 @@
 from Otolits_identyfication_program.image_loader import ImageLoader
 from Otolits_identyfication_program.bounding_box_manager import BoundingBoxManager
 from Otolits_identyfication_program.row_manager import RowManager
-from Otolits_identyfication_program.input_handler import InputHandler, Mode
+from enum import Enum, auto
 import cv2
 import sys
 import numpy as np
+
+
+class Mode(Enum):
+    AUTO = auto()  # Tryb automatyczny (domyślny)
+    MANUAL = auto()  # Ręczne dodawanie boxów
+    MOVE = auto()  # Przesuwanie boxów
+    RESIZE = auto()  # Zmiana rozmiaru boxów
+    DELETE = auto()  # Usuwanie boxów
+
+
+class InputHandler:
+    def __init__(self, bounding_box_manager, row_manager):
+        self.bbox_manager = bounding_box_manager
+        self.row_manager = row_manager
+        self.mode = Mode.AUTO  # Domyślny tryb
+        self.start_pos = None
+        self.current_pos = None
+        self.drawing = False
+        self.selected_box = None
+        self.drag_offset = None
+        print("Aktywny tryb: AUTO")  # Domyślny tryb przy inicjalizacji
+
+    def set_mode(self, mode):
+        """Zmiana trybu pracy"""
+        if isinstance(mode, Mode):
+            self.mode = mode
+            print(f"Aktywny tryb: {mode.name}")
+
+    def keyboard_callback(self, key):
+        """Obsługa zdarzeń klawiatury"""
+        key_to_mode = {
+            ord('m'): Mode.MANUAL,
+            ord('v'): Mode.MOVE,
+            ord('r'): Mode.RESIZE,
+            ord('d'): Mode.DELETE,
+            27: 'exit'  # ESC
+        }
+
+        if key in key_to_mode:
+            if key_to_mode[key] == 'exit':
+                cv2.destroyAllWindows()
+                sys.exit()
+            self.set_mode(key_to_mode[key])
 
 
 class ImageWindow:
@@ -14,10 +57,9 @@ class ImageWindow:
         self.input_handler = input_handler
         self.current_image = None
         self.temp_image = None
-        self.window_initialized = False
 
     def _prepare_display_image(self):
-        """Przygotowanie obrazu do wyświetlenia z konwersją kolorów"""
+        """Przygotowanie obrazu do wyświetlenia"""
         if self.current_image is None:
             return None
 
@@ -28,22 +70,19 @@ class ImageWindow:
         return self.current_image.copy()
 
     def update_display(self, temp_box_coords=None):
-        """
-        Aktualizuje wyświetlany obraz
-        temp_box_coords: (x1,y1,x2,y2) dla podglądu boxa podczas rysowania
-        """
+        """Aktualizacja wyświetlanego obrazu z boxami"""
         display_image = self._prepare_display_image()
         if display_image is None:
             return
 
-        # 1. Narysuj wszystkie istniejące boxy (zielone)
+        # Narysuj wszystkie istniejące boxy (zielone)
         for box in self.bbox_manager.boxes:
             cv2.rectangle(display_image,
                           (box.x1, box.y1),
                           (box.x2, box.y2),
                           (0, 255, 0), 2)
 
-        # 2. Jeśli jest aktywny podgląd nowego boxa (czerwony)
+        # Podgląd nowego boxa (czerwony) tylko w trybie MANUAL
         if temp_box_coords and self.input_handler.mode == Mode.MANUAL:
             x1, y1, x2, y2 = temp_box_coords
             cv2.rectangle(display_image,
@@ -54,6 +93,7 @@ class ImageWindow:
         cv2.imshow("Otolith Annotation Tool", display_image)
 
     def show_image(self):
+        """Główna pętla wyświetlania obrazu"""
         self.current_image = self.image_loader.load_image()
         if self.current_image is None:
             print("Brak zdjęć do wyświetlenia.")
@@ -61,15 +101,9 @@ class ImageWindow:
 
         print(f"\nZaładowany obraz - kształt: {self.current_image.shape}, typ: {self.current_image.dtype}")
 
-        # Inicjalizacja managerów
-        self.bbox_manager = BoundingBoxManager(self.current_image.shape)
-        self.input_handler.bbox_manager = self.bbox_manager
-        self.input_handler.set_mode(Mode.MOVE)  # Domyślny tryb - tylko przeglądanie
-
-        # Inicjalizacja okna i wyświetlenie obrazu
+        # Inicjalizacja okna
         cv2.namedWindow("Otolith Annotation Tool", cv2.WINDOW_NORMAL)
-        self.update_display()  # Pierwsze wyświetlenie obrazu
-        self.window_initialized = True
+        self.update_display()
 
         # Ustawienie callbacka myszy
         cv2.setMouseCallback("Otolith Annotation Tool",
@@ -83,34 +117,41 @@ class ImageWindow:
                 break
             elif key == ord('n'):
                 self._handle_next_image()
-            elif key in [ord('m'), ord('v'), ord('r'), ord('d')]:
+            else:
                 self.input_handler.keyboard_callback(key)
-                print(f"Aktywny tryb: {self.input_handler.mode.name}")
 
         cv2.destroyAllWindows()
         sys.exit()
 
     def _handle_mouse_event(self, event, x, y, flags, param):
-        """Obsługa zdarzeń myszy z kontrolą trybu"""
-        if not self.window_initialized:
+        """Obsługa zdarzeń myszy"""
+        if self.input_handler.mode == Mode.DELETE and event == cv2.EVENT_LBUTTONDOWN:
+            box = self.bbox_manager.get_box_at(x, y, tolerance=5)
+            if box:
+                self.bbox_manager.remove_box(box)
+                self.update_display()
             return
 
-        # Obsługa tylko w trybie manualnym
-        if self.input_handler.mode == Mode.MANUAL:
-            if event == cv2.EVENT_LBUTTONDOWN:
-                self.input_handler._handle_left_click(x, y)
-                self.temp_image = self._prepare_display_image()
+        if self.input_handler.mode != Mode.MANUAL:
+            return
 
-            elif event == cv2.EVENT_MOUSEMOVE:
-                if self.input_handler.drawing:
-                    temp_box = (self.input_handler.start_pos[0],
-                                self.input_handler.start_pos[1], x, y)
-                    self.update_display(temp_box_coords=temp_box)
+        if event == cv2.EVENT_LBUTTONDOWN:
+            self.input_handler.start_pos = (x, y)
+            self.input_handler.drawing = True
+            self.temp_image = self._prepare_display_image()
 
-            elif event == cv2.EVENT_LBUTTONUP:
-                if self.input_handler.drawing:
-                    self.input_handler._handle_left_release(x, y, self.current_image)
-                    self.update_display()
+        elif event == cv2.EVENT_MOUSEMOVE and self.input_handler.drawing:
+            temp_box = (self.input_handler.start_pos[0],
+                        self.input_handler.start_pos[1], x, y)
+            self.update_display(temp_box_coords=temp_box)
+
+        elif event == cv2.EVENT_LBUTTONUP and self.input_handler.drawing:
+            x1, x2 = sorted([self.input_handler.start_pos[0], x])
+            y1, y2 = sorted([self.input_handler.start_pos[1], y])
+            if abs(x2 - x1) > 10 and abs(y2 - y1) > 10:  # Minimalny rozmiar
+                self.bbox_manager.add_box(x1, y1, x2, y2)
+            self.input_handler.drawing = False
+            self.update_display()
 
     def _handle_next_image(self):
         """Obsługa przejścia do następnego obrazu"""
@@ -155,8 +196,6 @@ if __name__ == "__main__":
         ImageWindow(image_loader, bbox_manager, input_handler).show_image()
 
     except Exception as e:
-        print(f"\nKrytyczny błąd: {str(e)}")
-        import traceback
-
-        traceback.print_exc()
+        print(f"\nBłąd: {str(e)}")
         sys.exit(1)
+
