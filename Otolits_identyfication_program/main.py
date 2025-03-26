@@ -31,6 +31,7 @@ if __name__ == "__main__":
         print("r - tryb zmiany rozmiaru")
         print("d - tryb usuwania boxów")
         print("n - następny obraz")
+        print("PRAWY KLIK - wykryj wiersze")
         print("q - wyjście")
 
         ImageWindow(image_loader, bbox_manager, input_handler).show_image()

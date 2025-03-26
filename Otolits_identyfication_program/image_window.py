@@ -2,6 +2,7 @@ import cv2
 import sys
 from input_handler import Mode
 from bounding_box_manager import BoundingBoxManager
+from row_detector import RowDetector
 
 class ImageWindow:
     def __init__(self, image_loader, bbox_manager, input_handler):
@@ -10,6 +11,7 @@ class ImageWindow:
         self.input_handler = input_handler
         self.current_image = None
         self.temp_image = None
+        self.row_detector = RowDetector(bbox_manager)
 
     def _prepare_display_image(self):
         """Przygotowanie obrazu do wyświetlenia"""
@@ -23,16 +25,25 @@ class ImageWindow:
         return self.current_image.copy()
 
     def update_display(self, temp_box_coords=None):
-        """Aktualizacja wyświetlanego obrazu z boxami"""
+        """Aktualizacja wyświetlanego obrazu z boxami i wierszami"""
         display_image = self._prepare_display_image()
         if display_image is None:
             return
 
-        # Narysuj wszystkie istniejące boxy
+        # Upewnij się, że obraz jest w formacie BGR
+        if len(display_image.shape) == 2:  # Jeśli obraz jest grayscale
+            display_image = cv2.cvtColor(display_image, cv2.COLOR_GRAY2BGR)
+        elif display_image.shape[2] == 4:  # Jeśli obraz ma kanał alpha
+            display_image = cv2.cvtColor(display_image, cv2.COLOR_BGRA2BGR)
+
+        # Narysuj wszystkie istniejące boxy (zielone)
         for box in self.bbox_manager.boxes:
             pt1 = (int(box.x1), int(box.y1))
             pt2 = (int(box.x2), int(box.y2))
             cv2.rectangle(display_image, pt1, pt2, (0, 255, 0), 2)
+
+        # Rysuj linie wierszy (czerwone)
+        self.row_detector.draw_rows(display_image)
 
         # Podgląd nowego boxa w trybie MANUAL
         if temp_box_coords and self.input_handler.mode == Mode.MANUAL:
@@ -203,6 +214,14 @@ class ImageWindow:
                     self.bbox_manager.add_box(x1, y1, x2, y2)
                 self.input_handler.drawing = False
                 self.update_display()
+
+        # Obsługa prawego kliknięcia myszki
+        if event == cv2.EVENT_RBUTTONDOWN:
+            if len(self.bbox_manager.boxes) >= 2:  # Wymagamy co najmniej 2 boxy
+                self.row_detector.detect_rows()
+                self.update_display()
+            else:
+                print("Wymagane są co najmniej 2 bounding boxy do wykrycia wierszy")
 
     def _handle_next_image(self):
         """Obsługa przejścia do następnego obrazu z resetem do trybu AUTO"""
