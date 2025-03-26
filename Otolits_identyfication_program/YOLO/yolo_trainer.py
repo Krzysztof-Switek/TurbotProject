@@ -1,11 +1,11 @@
-import subprocess
+import os
+import cv2
 from ultralytics import YOLO
 from Otolits_identyfication_program.bounding_box_manager import BoundingBoxManager
 
-
 class YoloTrainer:
-    def __init__(self, model, data, imgsz=640, device='cpu', workers=0, batch=2, epochs=20, patience=5,
-                 name='turbot_results', amp=False, bounding_box_manager=None):
+    def __init__(self, model, data, imgsz=640, device='cpu', workers=0, batch=4, epochs=200, patience=50,
+                 name='turbot_results', amp=False, single_cls=True, bounding_box_manager=None):
         self.model = model
         self.data = data
         self.imgsz = imgsz
@@ -16,53 +16,71 @@ class YoloTrainer:
         self.patience = patience
         self.name = name
         self.amp = amp
-        self.bounding_box_manager = bounding_box_manager  # Obiekt do zarządzania boxami
+        self.single_cls = single_cls
+        self.bounding_box_manager = bounding_box_manager
 
     def train(self):
-        # Polecenie treningu YOLOv8
-        command = [
-            'yolo', 'train',
-            f'model={self.model}',
-            f'data={self.data}',
-            f'imgsz={self.imgsz}',
-            f'device={self.device}',
-            f'workers={self.workers}',
-            f'batch={self.batch}',
-            f'epochs={self.epochs}',
-            f'patience={self.patience}',
-            f'name={self.name}',
-            f'amp={str(self.amp).lower()}'
-        ]
-
         try:
-            subprocess.run(command, check=True)
+            model = YOLO(self.model)
+            model.train(
+                data=self.data,
+                imgsz=self.imgsz,
+                device=self.device,
+                workers=self.workers,
+                batch=self.batch,
+                epochs=self.epochs,
+                patience=self.patience,
+                name=self.name,
+                amp=self.amp,
+                single_cls=self.single_cls,
+                save_conf=False,
+                save_txt=False
+            )
             print("Training completed successfully.")
-        except subprocess.CalledProcessError as e:
-            print(f"Error during training: {e}")
+        except Exception as e:
+            print(f"Training failed: {e}")
 
     def detect_objects(self, image_path):
-        # Wykrywanie obiektów na podstawie wytrenowanego modelu
-        model = YOLO(self.model)  # Załaduj wytrenowany model YOLO
-        results = model(image_path)  # Wykrywanie obiektów na obrazie
+        try:
+            model = YOLO(self.model)
+            results = model(image_path)
+            result_dir = os.path.join(os.getcwd(), self.name)
 
-        # Przetwarzanie wyników detekcji
-        for box in results.xyxy[0].cpu().numpy():  # Iterujemy po wykrytych boxach
-            x1, y1, x2, y2, conf, cls = box  # Współrzędne boxa, pewność, klasa
-            self.bounding_box_manager.add_box(int(x1), int(y1), int(x2), int(y2))  # Dodajemy box do BoundingBoxManager
+            # Sprawdź, czy katalog istnieje, jeśli nie, utwórz go
+            if not os.path.exists(result_dir):
+                os.makedirs(result_dir)
 
-        print(f"Detected {len(results.xyxy[0])} objects.")
+            for r in results:
+                im = r.plot(labels=False)
+
+                # Sprawdzanie formatu obrazu
+                print(f"Image type: {type(im)}")
+
+                # Ścieżka do zapisu obrazu
+                output_image_path = os.path.join(result_dir, "no_labels_pred.jpg")
+
+                # Zapisz obraz
+                if cv2.imwrite(output_image_path, im):
+                    print(f"Image saved successfully at: {output_image_path}")
+                else:
+                    print(f"Failed to save the image at: {output_image_path}")
+
+                for box in r.boxes.xyxy.cpu().numpy():
+                    x1, y1, x2, y2 = map(int, box[:4])
+                    if self.bounding_box_manager:
+                        self.bounding_box_manager.add_box(x1, y1, x2, y2)
+
+            print(f"Detected {len(results[0].boxes)} objects.")
+        except Exception as e:
+            print(f"Detection failed: {e}")
 
 
-# Test integracji z BoundingBoxManager
 if __name__ == "__main__":
-    bounding_box_manager = BoundingBoxManager()  # Utwórz obiekt BoundingBoxManager
+    bounding_box_manager = BoundingBoxManager()
     trainer = YoloTrainer(model='yolo11l.pt', data='datasets/turbot.yaml', bounding_box_manager=bounding_box_manager)
 
-    # Trenuj model (to uruchomi polecenie treningowe)
+    # Trenuj model
     trainer.train()
 
-    # Wykonaj detekcję na obrazie (można podać ścieżkę do obrazu, np. "datasets/test_image.jpg")
-    trainer.detect_objects('datasets/test_image.jpg')
-
-    # Wyświetl wykryte boxy
-    print(f"Detected bounding boxes: {bounding_box_manager.get_boxes()}")
+    # Wykonaj detekcję na obrazie
+    trainer.detect_objects('/home/kswitek/Documents/TurbotProject/Otolits_identyfication_program/test_images/TUR_BITS_2016_Q1_1.jpg')
