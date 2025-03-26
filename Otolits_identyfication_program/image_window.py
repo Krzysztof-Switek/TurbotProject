@@ -28,21 +28,26 @@ class ImageWindow:
         if display_image is None:
             return
 
+        # Narysuj wszystkie istniejące boxy
         for box in self.bbox_manager.boxes:
-            try:
-                pt1 = (int(box.x1), int(box.y1))
-                pt2 = (int(box.x2), int(box.y2))
-                cv2.rectangle(display_image, pt1, pt2, (0, 255, 0), 2)
-            except Exception as e:
-                print(f"Błąd rysowania boxa {box}: {e}")
-                continue
+            pt1 = (int(box.x1), int(box.y1))
+            pt2 = (int(box.x2), int(box.y2))
+            cv2.rectangle(display_image, pt1, pt2, (0, 255, 0), 2)
 
+        # Podgląd nowego boxa w trybie MANUAL
         if temp_box_coords and self.input_handler.mode == Mode.MANUAL:
-            try:
-                x1, y1, x2, y2 = map(int, temp_box_coords)
-                cv2.rectangle(display_image, (x1, y1), (x2, y2), (0, 0, 255), 2)
-            except Exception as e:
-                print(f"Błąd rysowania tymczasowego boxa: {e}")
+            x1, y1, x2, y2 = map(int, temp_box_coords)
+            cv2.rectangle(display_image, (x1, y1), (x2, y2), (0, 0, 255), 2)
+
+        # Wyświetl tylko informację o trybie (bez liczby boxów)
+        mode_text = f"Tryb: {self.input_handler.mode.name}"
+        cv2.putText(display_image, mode_text,
+                    (20, 40),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    0.7,
+                    (255, 255, 255),
+                    2,
+                    cv2.LINE_AA)
 
         cv2.imshow("Otolith Annotation Tool", display_image)
 
@@ -67,7 +72,8 @@ class ImageWindow:
             elif key == ord('n'):
                 self._handle_next_image()
             else:
-                self.input_handler.keyboard_callback(key)
+                if self.input_handler.keyboard_callback(key):
+                    self.update_display()  # Aktualizuj tylko jeśli zmienił się tryb
 
         cv2.destroyAllWindows()
         sys.exit()
@@ -209,3 +215,4 @@ class ImageWindow:
             self.update_display()
         else:
             print("To już ostatnie zdjęcie.")
+

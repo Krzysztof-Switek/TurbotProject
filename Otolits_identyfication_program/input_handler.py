@@ -3,11 +3,11 @@ import cv2
 import sys
 
 class Mode(Enum):
-    AUTO = auto()
-    MANUAL = auto()
-    MOVE = auto()
-    RESIZE = auto()
-    DELETE = auto()
+    AUTO = auto()  # Tryb automatyczny (domyślny)
+    MANUAL = auto()  # Ręczne dodawanie boxów
+    MOVE = auto()  # Przesuwanie boxów
+    RESIZE = auto()  # Zmiana rozmiaru boxów
+    DELETE = auto()  # Usuwanie boxów
 
 class InputHandler:
     def __init__(self, bounding_box_manager, row_manager):
@@ -24,8 +24,11 @@ class InputHandler:
     def set_mode(self, mode):
         """Zmiana trybu pracy"""
         if isinstance(mode, Mode):
+            old_mode = self.mode
             self.mode = mode
             print(f"Aktywny tryb: {mode.name}")
+            return old_mode != mode  # Zwraca True tylko jeśli tryb się zmienił
+        return False
 
     def keyboard_callback(self, key):
         """Obsługa zdarzeń klawiatury"""
@@ -41,4 +44,6 @@ class InputHandler:
             if key_to_mode[key] == 'exit':
                 cv2.destroyAllWindows()
                 sys.exit()
-            self.set_mode(key_to_mode[key])
+            return self.set_mode(key_to_mode[key])
+        return False
+
