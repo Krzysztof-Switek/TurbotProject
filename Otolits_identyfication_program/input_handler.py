@@ -30,57 +30,35 @@ class InputHandler:
             raise ValueError("Nieprawidłowy tryb pracy")
 
     def mouse_callback(self, event, x, y, flags, param):
-        """Rozszerzona obsługa zdarzeń myszy"""
-        self.current_pos = (x, y)
-
-        # Sprawdzenie czy param to obraz
-        if not isinstance(param, np.ndarray):
-            print(f"Błąd: Oczekiwano obrazu numpy, a otrzymano {type(param)}")
-            return
+        """Obsługa zdarzeń myszy z podglądem boxa"""
+        image = param['image'] if param and 'image' in param else None
 
         if event == cv2.EVENT_LBUTTONDOWN:
             self._handle_left_click(x, y)
-
-        elif event == cv2.EVENT_LBUTTONUP:
-            self._handle_left_release(x, y, param)
-
+            self.temp_image = image.copy()  # Zapamiętaj obraz do podglądu
         elif event == cv2.EVENT_MOUSEMOVE:
-            self._handle_mouse_move(x, y, param)
-
-        elif event == cv2.EVENT_RBUTTONDOWN:
-            self._handle_right_click(x, y)
+            if self.drawing and self.mode == Mode.MANUAL:
+                # Podgląd boxa podczas przeciągania
+                display_image = self.temp_image.copy()
+                cv2.rectangle(display_image, self.start_pos, (x, y), (0, 255, 0), 2)
+                cv2.imshow("Otolith Annotation Tool", display_image)
+        elif event == cv2.EVENT_LBUTTONUP:
+            self._handle_left_release(x, y, image)
 
     def _handle_left_click(self, x, y):
-        """Obsługa kliknięcia LPM"""
         self.start_pos = (x, y)
-
-        if self.mode in [Mode.MANUAL, Mode.DELETE, Mode.MOVE, Mode.RESIZE]:
-            self.selected_box = self.bbox_manager.get_box_at(x, y, tolerance=5)
-
-            if self.selected_box:
-                if self.mode == Mode.MOVE:
-                    self.drag_offset = (x - self.selected_box.x1, y - self.selected_box.y1)
-                elif self.mode == Mode.RESIZE:
-                    self.drag_corner = self._get_nearest_corner(x, y)
-            else:
-                self.drawing = True if self.mode == Mode.MANUAL else False
+        if self.mode == Mode.MANUAL:
+            self.drawing = True
+            self.selected_box = None
 
     def _handle_left_release(self, x, y, image):
-        """Obsługa zwolnienia LPM"""
         if self.drawing and self.mode == Mode.MANUAL:
-            if abs(x - self.start_pos[0]) > 10 and abs(y - self.start_pos[1]) > 10:  # Minimalny rozmiar
-                self.bbox_manager.add_box(*self.start_pos, x, y)
-
-        elif self.selected_box:
-            if self.mode == Mode.MOVE:
-                dx = x - self.start_pos[0]
-                dy = y - self.start_pos[1]
-                self.selected_box.move(dx, dy)
-            elif self.mode == Mode.RESIZE:
-                self.bbox_manager.update_box(self.selected_box, *self._get_resized_coords(x, y))
-
+            x1, x2 = sorted([self.start_pos[0], x])
+            y1, y2 = sorted([self.start_pos[1], y])
+            if abs(x2 - x1) > 10 and abs(y2 - y1) > 10:  # Minimalny rozmiar
+                self.bbox_manager.add_box(x1, y1, x2, y2)
+                self._update_display(image)
         self._reset_state()
-        self._update_display(image)
 
     def _handle_mouse_move(self, x, y, image):
         """Obsługa ruchu myszy"""
@@ -157,24 +135,9 @@ class InputHandler:
         cv2.imshow("Otolith Annotation Tool", combined)
 
     def _update_display(self, image):
-        """Aktualizuje główny widok"""
-        box_layer = self.bbox_manager.get_box_layer()
-
-        # Dopasowanie rozmiaru box_layer
-        if box_layer.shape[:2] != image.shape[:2]:
-            box_layer = cv2.resize(box_layer, (image.shape[1], image.shape[0]), interpolation=cv2.INTER_NEAREST)
-
-        # Dopasowanie liczby kanałów box_layer
-        if len(box_layer.shape) == 2:  # Jeśli tylko jeden kanał (szarość), konwertuj do BGR
-            box_layer = cv2.cvtColor(box_layer, cv2.COLOR_GRAY2BGR)
-        elif box_layer.shape[2] == 4:  # Jeśli ma kanał alfa, konwertuj do BGR
-            box_layer = cv2.cvtColor(box_layer, cv2.COLOR_BGRA2BGR)
-
-        # Łączenie obrazów
-        combined = cv2.addWeighted(image, 1, box_layer, 1, 0)
-
-        # Aktualizacja okna o nazwie "Otolith Annotation Tool", zamiast tworzyć nowe okno
-        cv2.imshow("Otolith Annotation Tool", combined)
+        """Aktualizuje wyświetlanie - deleguje do głównej klasy"""
+        # Możesz pozostawić tę metodę pustą lub użyć do podglądu
+        pass
 
     def _reset_state(self):
         """Resetuje stan interakcji"""
@@ -206,3 +169,4 @@ class InputHandler:
 
         elif key == ord('s'):  # Sortuj boxy
             self.bbox_manager.boxes.sort(key=lambda b: b.x1)
+

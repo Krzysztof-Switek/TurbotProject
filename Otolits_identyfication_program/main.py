@@ -6,7 +6,6 @@ from Otolits_identyfication_program.model_yolo import YOLOModel
 from Otolits_identyfication_program.gui import GUI
 import cv2
 import sys
-import numpy as np
 
 
 class ImageWindow:
@@ -46,38 +45,39 @@ class ImageWindow:
 
     def update_display(self):
         """Aktualizuje wyświetlany obraz z boxami"""
-        display_image, box_layer = self.prepare_images()
-        if display_image is None or box_layer is None:
+        if self.current_image is None:
             return
 
-        # Konwersja typów i nałożenie warstw
-        combined = cv2.addWeighted(
-            display_image.astype('float32'), 1,
-            box_layer.astype('float32'), 0.7,
-            0
-        ).astype('uint8')
+        # Przygotowanie obrazu podstawowego
+        if len(self.current_image.shape) == 2:
+            display_image = cv2.cvtColor(self.current_image, cv2.COLOR_GRAY2BGR)
+        elif self.current_image.shape[2] == 4:
+            display_image = cv2.cvtColor(self.current_image, cv2.COLOR_BGRA2BGR)
+        else:
+            display_image = self.current_image.copy()
 
-        cv2.imshow("Otolith Annotation Tool", combined)
+        # Rysowanie wszystkich boxów
+        for box in self.bbox_manager.boxes:
+            cv2.rectangle(display_image,
+                          (box.x1, box.y1),
+                          (box.x2, box.y2),
+                          (0, 255, 0), 2)
+
+        cv2.imshow("Otolith Annotation Tool", display_image)
 
     def show_image(self):
         self.current_image = self.image_loader.load_image()
-
         if self.current_image is None:
-            print("Brak zdjęć do wyświetlenia.")
             return
 
-        print(f"\nZaładowany obraz - kształt: {self.current_image.shape}, typ: {self.current_image.dtype}")
-
-        # Inicjalizacja managerów
         self.bbox_manager = BoundingBoxManager(self.current_image.shape)
         self.input_handler.bbox_manager = self.bbox_manager
 
-        # Okno jest tworzone tylko raz
-        if cv2.getWindowProperty("Otolith Annotation Tool", cv2.WND_PROP_VISIBLE) == -1:
-            cv2.namedWindow("Otolith Annotation Tool", cv2.WINDOW_NORMAL)
-
-        # Ustawienie callbacka tylko raz
-        cv2.setMouseCallback("Otolith Annotation Tool", self.input_handler.mouse_callback, self.current_image)
+        cv2.namedWindow("Otolith Annotation Tool", cv2.WINDOW_NORMAL)
+        cv2.setMouseCallback("Otolith Annotation Tool",
+                             lambda e, x, y, f, p: self.input_handler.mouse_callback(e, x, y, f,
+                                                                                     {'image': self.current_image}),
+                             {'image': self.current_image})
 
         while True:
             self.update_display()
