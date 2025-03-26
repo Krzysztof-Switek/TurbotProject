@@ -77,18 +77,21 @@ class ImageWindow:
 
         # Narysuj wszystkie istniejące boxy (zielone)
         for box in self.bbox_manager.boxes:
-            cv2.rectangle(display_image,
-                          (box.x1, box.y1),
-                          (box.x2, box.y2),
-                          (0, 255, 0), 2)
+            try:
+                pt1 = (int(box.x1), int(box.y1))
+                pt2 = (int(box.x2), int(box.y2))
+                cv2.rectangle(display_image, pt1, pt2, (0, 255, 0), 2)
+            except Exception as e:
+                print(f"Błąd rysowania boxa {box}: {e}")
+                continue
 
         # Podgląd nowego boxa (czerwony) tylko w trybie MANUAL
         if temp_box_coords and self.input_handler.mode == Mode.MANUAL:
-            x1, y1, x2, y2 = temp_box_coords
-            cv2.rectangle(display_image,
-                          (x1, y1),
-                          (x2, y2),
-                          (0, 0, 255), 2)
+            try:
+                x1, y1, x2, y2 = map(int, temp_box_coords)
+                cv2.rectangle(display_image, (x1, y1), (x2, y2), (0, 0, 255), 2)
+            except Exception as e:
+                print(f"Błąd rysowania tymczasowego boxa: {e}")
 
         cv2.imshow("Otolith Annotation Tool", display_image)
 
@@ -125,6 +128,13 @@ class ImageWindow:
 
     def _handle_mouse_event(self, event, x, y, flags, param):
         """Obsługa zdarzeń myszy"""
+        try:
+            x, y = int(x), int(y)  # Upewnij się, że współrzędne są integerami
+        except (ValueError, TypeError):
+            print(f"Nieprawidłowe współrzędne myszy: x={x}, y={y}")
+            return
+
+        # Tryb DELETE
         if self.input_handler.mode == Mode.DELETE and event == cv2.EVENT_LBUTTONDOWN:
             box = self.bbox_manager.get_box_at(x, y, tolerance=5)
             if box:
@@ -132,26 +142,115 @@ class ImageWindow:
                 self.update_display()
             return
 
-        if self.input_handler.mode != Mode.MANUAL:
+        # Tryb MOVE
+        if self.input_handler.mode == Mode.MOVE:
+            if event == cv2.EVENT_LBUTTONDOWN:
+                box = self.bbox_manager.get_box_at(x, y, tolerance=5)
+                if box:
+                    self.input_handler.selected_box = box
+                    self.input_handler.drag_offset = (x - box.x1, y - box.y1)
+                    self.input_handler.start_pos = (x, y)
+
+            elif event == cv2.EVENT_MOUSEMOVE and self.input_handler.selected_box:
+                dx = x - self.input_handler.start_pos[0]
+                dy = y - self.input_handler.start_pos[1]
+                temp_box = self.input_handler.selected_box
+
+                # Utwórz kopię obrazu do podglądu
+                display_image = self._prepare_display_image()
+                if display_image is None:
+                    return
+
+                # Narysuj wszystkie boxy
+                for box in self.bbox_manager.boxes:
+                    if box != temp_box:
+                        pt1 = (int(box.x1), int(box.y1))
+                        pt2 = (int(box.x2), int(box.y2))
+                        cv2.rectangle(display_image, pt1, pt2, (0, 255, 0), 2)
+
+                # Narysuj podgląd przesuwanego boxa (niebieski)
+                pt1 = (int(temp_box.x1 + dx), int(temp_box.y1 + dy))
+                pt2 = (int(temp_box.x2 + dx), int(temp_box.y2 + dy))
+                cv2.rectangle(display_image, pt1, pt2, (255, 0, 0), 2)
+                cv2.imshow("Otolith Annotation Tool", display_image)
+
+            elif event == cv2.EVENT_LBUTTONUP and self.input_handler.selected_box:
+                dx = x - self.input_handler.start_pos[0]
+                dy = y - self.input_handler.start_pos[1]
+                box = self.input_handler.selected_box
+                box.move(dx, dy)
+                self.input_handler.selected_box = None
+                self.update_display()
             return
 
-        if event == cv2.EVENT_LBUTTONDOWN:
-            self.input_handler.start_pos = (x, y)
-            self.input_handler.drawing = True
-            self.temp_image = self._prepare_display_image()
+        # Tryb RESIZE
+        if self.input_handler.mode == Mode.RESIZE:
+            if event == cv2.EVENT_LBUTTONDOWN:
+                box = self.bbox_manager.get_box_at(x, y, tolerance=10)
+                if box:
+                    self.input_handler.selected_box = box
+                    self.input_handler.start_pos = (x, y)
+                    self.input_handler.drag_corner = box.get_nearest_corner(x, y)
 
-        elif event == cv2.EVENT_MOUSEMOVE and self.input_handler.drawing:
-            temp_box = (self.input_handler.start_pos[0],
-                        self.input_handler.start_pos[1], x, y)
-            self.update_display(temp_box_coords=temp_box)
+            elif event == cv2.EVENT_MOUSEMOVE and self.input_handler.selected_box:
+                box = self.input_handler.selected_box
+                corner = self.input_handler.drag_corner
 
-        elif event == cv2.EVENT_LBUTTONUP and self.input_handler.drawing:
-            x1, x2 = sorted([self.input_handler.start_pos[0], x])
-            y1, y2 = sorted([self.input_handler.start_pos[1], y])
-            if abs(x2 - x1) > 10 and abs(y2 - y1) > 10:  # Minimalny rozmiar
-                self.bbox_manager.add_box(x1, y1, x2, y2)
-            self.input_handler.drawing = False
-            self.update_display()
+                # Utwórz kopię obrazu do podglądu
+                display_image = self._prepare_display_image()
+                if display_image is None:
+                    return
+
+                # Narysuj wszystkie boxy
+                for b in self.bbox_manager.boxes:
+                    if b != box:
+                        pt1 = (int(b.x1), int(b.y1))
+                        pt2 = (int(b.x2), int(b.y2))
+                        cv2.rectangle(display_image, pt1, pt2, (0, 255, 0), 2)
+
+                # Narysuj podgląd zmienianego boxa (żółty)
+                temp_coords = list(box.get_coordinates())
+                if corner == 1:  # lewy górny
+                    temp_coords[0], temp_coords[1] = x, y
+                elif corner == 2:  # prawy górny
+                    temp_coords[2], temp_coords[1] = x, y
+                elif corner == 3:  # lewy dolny
+                    temp_coords[0], temp_coords[3] = x, y
+                elif corner == 4:  # prawy dolny
+                    temp_coords[2], temp_coords[3] = x, y
+
+                pt1 = (int(temp_coords[0]), int(temp_coords[1]))
+                pt2 = (int(temp_coords[2]), int(temp_coords[3]))
+                cv2.rectangle(display_image, pt1, pt2, (0, 255, 255), 2)
+                cv2.imshow("Otolith Annotation Tool", display_image)
+
+            elif event == cv2.EVENT_LBUTTONUP and self.input_handler.selected_box:
+                box = self.input_handler.selected_box
+                corner = self.input_handler.drag_corner
+                box.resize(corner, x, y)
+                self.input_handler.selected_box = None
+                self.update_display()
+            return
+
+        # Tryb MANUAL
+        if self.input_handler.mode == Mode.MANUAL:
+            if event == cv2.EVENT_LBUTTONDOWN:
+                self.input_handler.start_pos = (x, y)
+                self.input_handler.drawing = True
+                self.temp_image = self._prepare_display_image()
+
+            elif event == cv2.EVENT_MOUSEMOVE and self.input_handler.drawing:
+                temp_box = (self.input_handler.start_pos[0],
+                            self.input_handler.start_pos[1], x, y)
+                self.update_display(temp_box_coords=temp_box)
+
+            elif event == cv2.EVENT_LBUTTONUP and self.input_handler.drawing:
+                x1, x2 = sorted([self.input_handler.start_pos[0], x])
+                y1, y2 = sorted([self.input_handler.start_pos[1], y])
+                if abs(x2 - x1) > 10 and abs(y2 - y1) > 10:  # Minimalny rozmiar
+                    self.bbox_manager.add_box(x1, y1, x2, y2)
+                self.input_handler.drawing = False
+                self.update_display()
 
     def _handle_next_image(self):
         """Obsługa przejścia do następnego obrazu"""
