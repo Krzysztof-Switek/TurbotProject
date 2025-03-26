@@ -6,8 +6,8 @@ from Otolits_identyfication_program.image_loader import ImageLoader
 
 
 class TestImageLoader(unittest.TestCase):
-    TEST_DIR = "tests/test_images"
-    TEST_IMAGE = "tests/test_images/test_image.jpg"
+    TEST_DIR = "test_images"
+    TEST_IMAGE = "test_images/test_image.jpg"
 
     @classmethod
     def setUpClass(cls):
