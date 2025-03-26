@@ -1,6 +1,6 @@
 import numpy as np
 import cv2
-from typing import List, Tuple
+from typing import List
 from dataclasses import dataclass
 
 
@@ -8,101 +8,120 @@ from dataclasses import dataclass
 class RowLine:
     slope: float
     intercept: float
-    boxes: List['BoundingBox']  # Lista bboxów przypisanych do tej linii
+    boxes: List['BoundingBox']
 
 
 class RowDetector:
     def __init__(self, bbox_manager):
         self.bbox_manager = bbox_manager
         self.rows: List[RowLine] = []
+        self.used_boxes = set()  # Zbiór przechowujący ID już użytych boxów
 
     def detect_rows(self) -> List[RowLine]:
-        """Główna metoda wykrywająca wiersze"""
-        if not self.bbox_manager.boxes:
-            return []
-
-        # 1. Grupowanie bboxów w potencjalne wiersze
-        boxes_sorted = sorted(self.bbox_manager.boxes, key=lambda b: b.y1)
-        clusters = self._cluster_boxes(boxes_sorted)
-
-        # 2. Dopasowanie linii do każdej grupy
+        """Iteracyjna metoda wykrywająca niezależne wiersze od góry do dołu"""
         self.rows = []
-        for cluster in clusters:
-            if len(cluster) < 2:
-                continue  # Pomijamy pojedyncze bboxy
+        self.used_boxes = set()
 
-            x_centers = [(b.x1 + b.x2) / 2 for b in cluster]
-            y_centers = [(b.y1 + b.y2) / 2 for b in cluster]
+        remaining_boxes = self.bbox_manager.boxes.copy()
 
-            # Dopasowanie linii metodą najmniejszych kwadratów
-            A = np.vstack([x_centers, np.ones(len(x_centers))]).T
-            slope, intercept = np.linalg.lstsq(A, y_centers, rcond=None)[0]
+        while remaining_boxes:
+            # Sortuj pozostałe boxy od góry do dołu
+            remaining_boxes.sort(key=lambda b: b.y1)
 
-            self.rows.append(RowLine(slope, intercept, cluster))
+            # Wybierz grupę kandydatów na pierwszy wiersz (najwyższe boxy)
+            candidate_boxes = self._select_candidate_boxes(remaining_boxes)
 
-        # 3. Upewniamy się, że linie nie przecinają się
-        self._ensure_non_intersecting()
+            if not candidate_boxes:
+                break
+
+            # Dopasuj linię do kandydatów
+            line = self._fit_line_to_boxes(candidate_boxes)
+
+            # Znajdź wszystkie boxy należące do tego wiersza
+            row_boxes = self._find_boxes_for_line(line, remaining_boxes)
+
+            if row_boxes:
+                self.rows.append(line)
+                for box in row_boxes:
+                    self.used_boxes.add(box.id)
+                    remaining_boxes.remove(box)
+            else:
+                # Jeśli nie znaleziono boxów dla linii, dodaj najwyższy jako osobny wiersz
+                single_box = remaining_boxes.pop(0)
+                self.rows.append(RowLine(0.0, (single_box.y1 + single_box.y2) / 2, [single_box]))
+                self.used_boxes.add(single_box.id)
 
         return self.rows
 
-    def _cluster_boxes(self, boxes: List['BoundingBox'], threshold: float = 30.0) -> List[List['BoundingBox']]:
-        """Grupuje bboxy w wiersze na podstawie pozycji pionowej"""
-        clusters = []
-        current_cluster = [boxes[0]]
+    def _select_candidate_boxes(self, boxes: List['BoundingBox'], threshold: float = 30.0) -> List['BoundingBox']:
+        """Wybierz grupę kandydatów na wiersz (najwyższe boxy w podobnej pozycji pionowej)"""
+        if not boxes:
+            return []
+
+        candidates = [boxes[0]]
+        first_center = (boxes[0].y1 + boxes[0].y2) / 2
 
         for box in boxes[1:]:
-            # Sprawdzamy czy bbox pasuje do obecnego klastra (na podstawie środka)
-            last_box = current_cluster[-1]
-            last_center = (last_box.y1 + last_box.y2) / 2
-            current_center = (box.y1 + box.y2) / 2
-
-            if abs(current_center - last_center) < threshold:
-                current_cluster.append(box)
+            center = (box.y1 + box.y2) / 2
+            if abs(center - first_center) < threshold:
+                candidates.append(box)
             else:
-                clusters.append(current_cluster)
-                current_cluster = [box]
+                break
 
-        if current_cluster:
-            clusters.append(current_cluster)
+        return candidates
 
-        return clusters
+    def _fit_line_to_boxes(self, boxes: List['BoundingBox']) -> RowLine:
+        """Dopasuj linię do grupy boxów metodą najmniejszych kwadratów"""
+        if len(boxes) == 1:
+            box = boxes[0]
+            return RowLine(0.0, (box.y1 + box.y2) / 2, boxes)
 
-    def _ensure_non_intersecting(self):
-        """Upewnia się, że linie nie przecinają się"""
-        if len(self.rows) < 2:
-            return
+        x_centers = [(b.x1 + b.x2) / 2 for b in boxes]
+        y_centers = [(b.y1 + b.y2) / 2 for b in boxes]
 
-        # Sortujemy linie po intercept
-        self.rows.sort(key=lambda line: line.intercept)
+        A = np.vstack([x_centers, np.ones(len(x_centers))]).T
+        slope, intercept = np.linalg.lstsq(A, y_centers, rcond=None)[0]
 
-        # Sprawdzamy czy nachylenia są rosnące
-        for i in range(1, len(self.rows)):
-            if self.rows[i].slope <= self.rows[i - 1].slope:
-                # Jeśli nie, uśredniamy nachylenia
-                avg_slope = (self.rows[i].slope + self.rows[i - 1].slope) / 2
-                self.rows[i].slope = avg_slope
-                self.rows[i - 1].slope = avg_slope
+        return RowLine(slope, intercept, boxes)
 
-    def draw_rows(self, image):
-        """Draw detected row lines"""
-        for line in self.rows:
-            if len(line.boxes) < 2:
+    def _find_boxes_for_line(self, line: RowLine, boxes: List['BoundingBox'], threshold: float = 15.0) -> List[
+        'BoundingBox']:
+        """Znajdź wszystkie boxy należące do danej linii"""
+        row_boxes = []
+
+        for box in boxes:
+            if box.id in self.used_boxes:
                 continue
 
-            x_coords = [b.x1 for b in line.boxes] + [b.x2 for b in line.boxes]
-            min_x, max_x = min(x_coords), max(x_coords)
+            # Oblicz odległość środka boxa od linii
+            x_center = (box.x1 + box.x2) / 2
+            y_center = (box.y1 + box.y2) / 2
+            line_y = line.slope * x_center + line.intercept
+            distance = abs(y_center - line_y)
 
-            # Konwersja współrzędnych na integer
-            min_x = int(min_x)
-            max_x = int(max_x)
-            y1 = int(line.slope * min_x + line.intercept)
-            y2 = int(line.slope * max_x + line.intercept)
+            if distance < threshold:
+                row_boxes.append(box)
 
-            # Upewniamy się, że współrzędne są w zakresie obrazu
-            height, width = image.shape[:2]
-            min_x = max(0, min(min_x, width - 1))
-            max_x = max(0, min(max_x, width - 1))
-            y1 = max(0, min(y1, height - 1))
-            y2 = max(0, min(y2, height - 1))
+        return row_boxes
 
-            cv2.line(image, (min_x, y1), (max_x, y2), (0, 0, 255), 2)
+    def draw_rows(self, image):
+        """Rysuje wykryte linie wierszy na obrazie"""
+        for line in self.rows:
+            if not line.boxes:
+                continue
+
+            x_coords = []
+            for box in line.boxes:
+                x_coords.append(box.x1)
+                x_coords.append(box.x2)
+
+            min_x = int(max(0, min(x_coords)))
+            max_x = int(max(0, max(x_coords)))
+
+            if len(line.boxes) == 1 or abs(line.slope) < 0.01:  # Dla pojedynczych lub prawie poziomych
+                y = int(line.intercept)
+                cv2.line(image, (min_x, y), (max_x, y), (0, 0, 255), 2)
+            else:
+                y1 = int(line.slope * min_x + line.intercept)
+                y2 = int(line.slope * max_x + line.intercept)
+                cv2.line(image, (min_x, y1), (max_x, y2), (0, 0, 255), 2)
