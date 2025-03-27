@@ -1,8 +1,10 @@
 import cv2
+import os
 import sys
 from input_handler import Mode
 from bounding_box_manager import BoundingBoxManager
 from row_detector import RowDetector, RowEditMode
+from image_cropper import ImageCropper
 
 
 class ImageWindow:
@@ -15,6 +17,7 @@ class ImageWindow:
         self.row_detector = RowDetector(bbox_manager)
         self.input_handler.row_detector = self.row_detector
         self.window_name = "Otolith Annotation Tool"
+        self.image_cropper = ImageCropper()
 
     def _prepare_display_image(self):
         """Przygotowanie obrazu do wyświetlenia"""
@@ -99,6 +102,11 @@ class ImageWindow:
             if (key == ord('q') or
                     cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) < 1):
                 break
+
+            # Obsługa klawisza Enter - wycinanie boxów
+            if key == 13:  # 13 to kod klawisza Enter
+                 self._handle_crop_boxes()
+                 continue
 
             # Obsługa klawiszy
             if key == ord('n'):
@@ -293,3 +301,30 @@ class ImageWindow:
 
             print(f"Automatycznie wykryto {len(sample_boxes)} obiektów")
 
+    def _handle_crop_boxes(self):
+        """Obsługa wycinania boxów po naciśnięciu Enter"""
+        if not self.bbox_manager.boxes:
+            print("Brak boxów do wycięcia")
+            return
+
+        # Pobierz oryginalny obraz (nieprzeskalowany)
+        original_image = self.image_loader.get_current_original_image()
+        if original_image is None:
+            print("Nie można załadować oryginalnego obrazu")
+            return
+
+        # Wykonaj wycinanie
+        results = self.image_cropper.crop_and_save(
+            original_image,
+            self.row_detector.rows,
+            self.bbox_manager.boxes
+        )
+
+        # Wyświetl informacje o wynikach
+        if results:
+            print(f"\nPomyślnie wycięto i zapisano {len(results)} boxów:")
+            for result in results:
+                print(f"- {result.filename} (wiersz {result.row_index}, box {result.box_index})")
+            print(f"Pliki zapisano w: {os.path.abspath(self.image_cropper.output_dir)}\n")
+        else:
+            print("Nie udało się wyciąć żadnych boxów")

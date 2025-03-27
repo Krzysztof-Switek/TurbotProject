@@ -1,5 +1,7 @@
 import os
 import cv2
+import numpy as np
+from typing import Optional
 
 def get_screen_size():
     import tkinter as tk
@@ -25,6 +27,8 @@ class ImageLoader:
 
         image_path = os.path.join(self.image_dir, self.image_files[self.current_index])
         self.original_image = cv2.imread(image_path)
+        if self.original_image is None:
+            raise ValueError(f"Nie udało się załadować obrazu: {image_path}")
         self.image = self._resize_to_screen(self.original_image)
         return self.image
 
@@ -36,9 +40,21 @@ class ImageLoader:
 
     def _resize_to_screen(self, image):
         h, w = image.shape[:2]
-        scale = min(self.screen_width / w, self.screen_height / h)
+        scale = min(self.screen_width / w, self.screen_height / h) * 0.9  # 90% ekranu
         new_size = (int(w * scale), int(h * scale))
         return cv2.resize(image, new_size, interpolation=cv2.INTER_AREA)
 
-    def get_original_image(self):
-        return self.original_image
+    def get_original_image(self) -> Optional[np.ndarray]:
+        """Zwraca oryginalny, nieprzeskalowany obraz"""
+        return self.original_image.copy() if self.original_image is not None else None
+
+    def get_current_original_image(self) -> Optional[np.ndarray]:
+        """Alias dla get_original_image() dla spójności interfejsu"""
+        return self.get_original_image()
+
+    @property
+    def current_image_path(self) -> Optional[str]:
+        """Zwraca ścieżkę do aktualnie załadowanego obrazu"""
+        if 0 <= self.current_index < len(self.image_files):
+            return os.path.join(self.image_dir, self.image_files[self.current_index])
+        return None
