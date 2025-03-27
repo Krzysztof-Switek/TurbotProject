@@ -447,14 +447,3 @@ class RowDetector:
             return False
 
         return intersect
-
-    def enable_debug_mode(self, enable: bool = True):
-        """Włącza/wyłącza tryb debugowania z dodatkowymi printami"""
-        self.debug_mode = enable
-
-    def get_unassigned_boxes(self) -> List[BoundingBox]:
-        """Zwraca listę boxów nieprzypisanych do żadnego wiersza"""
-        used_boxes = set()
-        for row in self.rows:
-            used_boxes.update(row.boxes)
-        return [b for b in self.bbox_manager.boxes if b not in used_boxes]
