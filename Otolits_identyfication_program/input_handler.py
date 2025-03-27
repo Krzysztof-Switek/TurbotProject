@@ -230,3 +230,4 @@ class InputHandler:
                 self.bbox_manager.remove_box(box)
                 return True
         return False
+

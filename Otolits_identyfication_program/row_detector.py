@@ -139,6 +139,9 @@ class RowDetector:
         if not self.selected_row or not self.drag_start or not self.drag_type:
             return False
 
+        if self._check_line_intersections(self.selected_row):
+            return False  # Blokuj zmianę jeśli powoduje przecięcie
+
         if self.drag_type == 'move':
             # Przesuwanie całej linii
             dx = x - self.drag_start[0]
@@ -275,3 +278,11 @@ class RowDetector:
         C = x2 * y1 - x1 * y2
 
         return abs(A * x0 + B * y0 + C) / np.sqrt(A ** 2 + B ** 2)
+
+    def _check_line_intersections(self, new_line):
+        for row in self.rows:
+            if row == new_line:
+                continue
+            if self._do_lines_intersect(row, new_line):
+                return True
+        return False
