@@ -1,8 +1,8 @@
 from image_loader import ImageLoader
 from bounding_box_manager import BoundingBoxManager
-from row_manager import RowManager
+from row_detector import RowDetector
 from image_window import ImageWindow
-from input_handler import InputHandler, Mode
+from input_handler import InputHandler
 import cv2
 import sys
 
@@ -22,8 +22,8 @@ if __name__ == "__main__":
         print(f"Typ danych: {first_image.dtype}")
 
         bbox_manager = BoundingBoxManager(first_image.shape)
-        row_manager = RowManager()
-        input_handler = InputHandler(bbox_manager, row_manager)
+        row_detector = RowDetector(bbox_manager)
+        input_handler = InputHandler(bbox_manager, row_detector)
 
         print("\nSterowanie:")
         print("m - tryb manualny (dodawanie boxów)")
@@ -39,3 +39,4 @@ if __name__ == "__main__":
     except Exception as e:
         print(f"\nBłąd: {str(e)}")
         sys.exit(1)
+
