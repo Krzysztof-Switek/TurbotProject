@@ -139,33 +139,71 @@ class RowDetector:
         if not self.selected_row or not self.drag_start or not self.drag_type:
             return False
 
-        if self._check_line_intersections(self.selected_row):
-            return False  # Blokuj zmianę jeśli powoduje przecięcie
-
         if self.drag_type == 'move':
-            # Przesuwanie całej linii
+            # Przesuwanie całej linii - tymczasowe obliczenie nowej pozycji
             dx = x - self.drag_start[0]
             dy = y - self.drag_start[1]
 
-            new_p1 = (self.selected_row.p1[0] + dx, self.selected_row.p1[1] + dy)
-            new_p2 = (self.selected_row.p2[0] + dx, self.selected_row.p2[1] + dy)
+            # Utwórz tymczasową linię do sprawdzenia przecięć
+            temp_row = RowLine(
+                slope=self.selected_row.slope,
+                intercept=self.selected_row.intercept,
+                boxes=self.selected_row.boxes.copy(),
+                id=self.selected_row.id,
+                p1=(self.selected_row.p1[0] + dx, self.selected_row.p1[1] + dy),
+                p2=(self.selected_row.p2[0] + dx, self.selected_row.p2[1] + dy)
+            )
 
-            self.selected_row.p1 = new_p1
-            self.selected_row.p2 = new_p2
-            self._update_line_from_points()
+            # Sprawdź przecięcia tylko z innymi liniami (ignorując aktualną linię)
+            other_rows = [row for row in self.rows if row.id != self.selected_row.id]
+            if not self._check_line_intersections(temp_row, other_rows):
+                # Jeśli nie ma przecięć, zastosuj zmianę
+                self.selected_row.p1 = (self.selected_row.p1[0] + dx, self.selected_row.p1[1] + dy)
+                self.selected_row.p2 = (self.selected_row.p2[0] + dx, self.selected_row.p2[1] + dy)
+                self._update_line_from_points()
+                self.drag_start = (x, y)
+                return True
+            return False
 
         elif self.drag_type == 'p1':
             # Edycja punktu początkowego
-            self.selected_row.p1 = (x, y)
-            self._update_line_from_points()
+            temp_row = RowLine(
+                slope=self.selected_row.slope,
+                intercept=self.selected_row.intercept,
+                boxes=self.selected_row.boxes.copy(),
+                id=self.selected_row.id,
+                p1=(x, y),
+                p2=self.selected_row.p2
+            )
+
+            other_rows = [row for row in self.rows if row.id != self.selected_row.id]
+            if not self._check_line_intersections(temp_row, other_rows):
+                self.selected_row.p1 = (x, y)
+                self._update_line_from_points()
+                self.drag_start = (x, y)
+                return True
+            return False
 
         elif self.drag_type == 'p2':
             # Edycja punktu końcowego
-            self.selected_row.p2 = (x, y)
-            self._update_line_from_points()
+            temp_row = RowLine(
+                slope=self.selected_row.slope,
+                intercept=self.selected_row.intercept,
+                boxes=self.selected_row.boxes.copy(),
+                id=self.selected_row.id,
+                p1=self.selected_row.p1,
+                p2=(x, y)
+            )
 
-        self.drag_start = (x, y)
-        return True
+            other_rows = [row for row in self.rows if row.id != self.selected_row.id]
+            if not self._check_line_intersections(temp_row, other_rows):
+                self.selected_row.p2 = (x, y)
+                self._update_line_from_points()
+                self.drag_start = (x, y)
+                return True
+            return False
+
+        return False
 
     def _handle_left_release(self, x: int, y: int) -> bool:
         if self.selected_row:
@@ -286,3 +324,35 @@ class RowDetector:
             if self._do_lines_intersect(row, new_line):
                 return True
         return False
+
+    def _check_line_intersections(self, line: RowLine, other_lines: List[RowLine]) -> bool:
+        """Sprawdza czy linia przecina którąś z podanych linii"""
+        if not line.p1 or not line.p2:
+            return False
+
+        for other_line in other_lines:
+            if not other_line.p1 or not other_line.p2:
+                continue
+
+            if self._do_lines_intersect(line.p1, line.p2, other_line.p1, other_line.p2):
+                return True
+        return False
+
+    def _do_lines_intersect(self, p1: Tuple[float, float], p2: Tuple[float, float],
+                            p3: Tuple[float, float], p4: Tuple[float, float]) -> bool:
+        """Sprawdza czy dwa odcinki się przecinają"""
+
+        def ccw(A, B, C):
+            return (C[1] - A[1]) * (B[0] - A[0]) > (B[1] - A[1]) * (C[0] - A[0])
+
+        A, B = p1, p2
+        C, D = p3, p4
+
+        # Sprawdzenie czy odcinki się przecinają
+        intersect = ccw(A, C, D) != ccw(B, C, D) and ccw(A, B, C) != ccw(A, B, D)
+
+        # Dodatkowo sprawdź czy końce nie pokrywają się (to nie jest przecięcie)
+        if (A == C or A == D or B == C or B == D):
+            return False
+
+        return intersect
