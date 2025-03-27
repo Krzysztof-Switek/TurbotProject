@@ -1,9 +1,13 @@
 import os
 import cv2
 import numpy as np
-from typing import List, Tuple, Optional
+from typing import List, Tuple, Optional, TYPE_CHECKING
 from dataclasses import dataclass
 
+if TYPE_CHECKING:
+    from image_loader import ImageLoader
+    from row_detector import RowLine
+    from bounding_box_manager import BoundingBox
 
 @dataclass
 class CropResult:
@@ -13,27 +17,17 @@ class CropResult:
     original_coords: Tuple[int, int, int, int]
     filename: str
 
-
 class ImageCropper:
-    def __init__(self, output_dir: str = "output_crops"):
+    def __init__(self, output_dir: str = "output_crops", image_loader: 'ImageLoader' = None):
         self.output_dir = output_dir
+        self.image_loader = image_loader
         os.makedirs(output_dir, exist_ok=True)
 
     def crop_and_save(self,
-                      original_image: np.ndarray,
-                      rows: List['RowLine'],
-                      boxes: List['BoundingBox']) -> List[CropResult]:
-        """
-        Wycina i zapisuje boxy z oryginalnego obrazu w kolejności wyznaczonej przez linie.
+                     original_image: np.ndarray,
+                     rows: List['RowLine'],
+                     boxes: List['BoundingBox']) -> List[CropResult]:
 
-        Args:
-            original_image: Oryginalny obraz (pełna rozdzielczość) jako numpy array
-            rows: Lista obiektów RowLine z RowDetector
-            boxes: Lista obiektów BoundingBox z BoundingBoxManager
-
-        Returns:
-            Lista obiektów CropResult z wynikami wycinania
-        """
         if original_image is None:
             print("Brak obrazu do wycięcia")
             return []
@@ -49,36 +43,29 @@ class ImageCropper:
             sorted_boxes = sorted(row.boxes, key=lambda b: (b.x1 + b.x2) / 2)
 
             for box_idx, box in enumerate(sorted_boxes):
-                # Znajdź oryginalny box w pełnej rozdzielczości
-                original_box = next((b for b in boxes if b.id == box.id), None)
-                if not original_box:
-                    continue
+                # Przelicz współrzędne boxa na oryginalną rozdzielczość
+                if self.image_loader:
+                    x1, y1, x2, y2 = self.image_loader.scale_coords_to_original(box.x1, box.y1, box.x2, box.y2)
+                else:
+                    x1, y1, x2, y2 = box.x1, box.y1, box.x2, box.y2
 
-                # Konwersja współrzędnych na integer i zabezpieczenie przed przekroczeniem wymiarów
+                # Zabezpieczenie przed przekroczeniem wymiarów
                 h, w = original_image.shape[:2]
-                x1 = int(max(0, min(w, original_box.x1)))
-                y1 = int(max(0, min(h, original_box.y1)))
-                x2 = int(max(0, min(w, original_box.x2)))
-                y2 = int(max(0, min(h, original_box.y2)))
+                x1, x2 = sorted([max(0, min(w, x1)), max(0, min(w, x2))])
+                y1, y2 = sorted([max(0, min(h, y1)), max(0, min(h, y2))])
 
-                # Sprawdzenie poprawności współrzędnych
                 if x1 >= x2 or y1 >= y2:
-                    print(f"Nieprawidłowe współrzędne boxu: ({x1}, {y1}, {x2}, {y2}) - pominięto")
                     continue
 
-                # Wycinanie obszaru
                 try:
-                    cropped = original_image[y1:y2, x1:x2].copy()  # .copy() aby uniknąć problemów z pamięcią
+                    cropped = original_image[y1:y2, x1:x2].copy()
                     if cropped.size == 0:
-                        print(f"Pusty wycinek dla boxu: ({x1}, {y1}, {x2}, {y2}) - pominięto")
                         continue
 
-                    # Generuj nazwę pliku
                     filename = f"row_{row_idx:02d}_box_{box_idx:02d}.png"
                     filepath = os.path.join(self.output_dir, filename)
-
-                    # Zapisz do pliku
                     cv2.imwrite(filepath, cropped)
+
                     results.append(CropResult(
                         image=cropped,
                         box_index=box_idx,
@@ -87,6 +74,7 @@ class ImageCropper:
                         filename=filename
                     ))
                 except Exception as e:
-                    print(f"Błąd podczas przetwarzania boxu: {str(e)}")
+                    print(f"Błąd podczas wycinania boxu: {e}")
 
         return results
+

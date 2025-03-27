@@ -17,7 +17,7 @@ class ImageWindow:
         self.row_detector = RowDetector(bbox_manager)
         self.input_handler.row_detector = self.row_detector
         self.window_name = "Otolith Annotation Tool"
-        self.image_cropper = ImageCropper()
+        self.image_cropper = ImageCropper(image_loader=image_loader)
 
     def _prepare_display_image(self):
         """Przygotowanie obrazu do wyświetlenia"""
@@ -303,28 +303,32 @@ class ImageWindow:
 
     def _handle_crop_boxes(self):
         """Obsługa wycinania boxów po naciśnięciu Enter"""
-        if not self.bbox_manager.boxes:
-            print("Brak boxów do wycięcia")
-            return
+        try:
+            if not hasattr(self, 'image_cropper') or not self.image_cropper:
+                print("ImageCropper nie został poprawnie zainicjalizowany")
+                return
 
-        # Pobierz oryginalny obraz (nieprzeskalowany)
-        original_image = self.image_loader.get_current_original_image()
-        if original_image is None:
-            print("Nie można załadować oryginalnego obrazu")
-            return
 
-        # Wykonaj wycinanie
-        results = self.image_cropper.crop_and_save(
-            original_image,
-            self.row_detector.rows,
-            self.bbox_manager.boxes
-        )
+            original_image = self.image_loader.get_current_original_image()
+            if original_image is None:
+                print("Nie można załadować oryginalnego obrazu")
+                return
 
-        # Wyświetl informacje o wynikach
-        if results:
-            print(f"\nPomyślnie wycięto i zapisano {len(results)} boxów:")
-            for result in results:
-                print(f"- {result.filename} (wiersz {result.row_index}, box {result.box_index})")
-            print(f"Pliki zapisano w: {os.path.abspath(self.image_cropper.output_dir)}\n")
-        else:
-            print("Nie udało się wyciąć żadnych boxów")
+            print("Rozpoczynanie procesu wycinania boxów...")
+            results = self.image_cropper.crop_and_save(
+                original_image,
+                self.row_detector.rows,
+                self.bbox_manager.boxes
+            )
+
+            if results:
+                print(f"\nPomyślnie wycięto i zapisano {len(results)} boxów:")
+                for result in results:
+                    print(f"- {result.filename} (wiersz {result.row_index}, box {result.box_index})")
+                print(f"Pliki zapisano w: {os.path.abspath(self.image_cropper.output_dir)}\n")
+            else:
+                print("Nie udało się wyciąć żadnych boxów")
+
+        except Exception as e:
+            print(f"Błąd podczas wycinania boxów: {str(e)}")
+
