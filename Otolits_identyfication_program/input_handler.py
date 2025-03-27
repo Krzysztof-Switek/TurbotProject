@@ -61,20 +61,23 @@ class InputHandler:
         return False
 
     def keyboard_callback(self, key):
-        """Obsługa zdarzeń klawiatury"""
+        """Obsługa zdarzeń klawiatury z natychmiastowym odświeżaniem"""
         key_actions = {
-            ord('m'): lambda: self.set_mode(Mode.MANUAL),
-            ord('v'): lambda: self.set_mode(Mode.MOVE),
-            ord('r'): lambda: self.set_mode(Mode.RESIZE),
-            ord('d'): lambda: self.set_mode(Mode.DELETE),
-            27: lambda: [cv2.destroyAllWindows(), sys.exit()],
-            ord('1'): lambda: self._set_row_edit_mode(RowEditMode.EDIT),
-            ord('2'): lambda: self._set_row_edit_mode(RowEditMode.ADD),
-            ord('0'): lambda: self._set_row_edit_mode(RowEditMode.NONE)
+            ord('m'): lambda: (self.set_mode(Mode.MANUAL), True),
+            ord('v'): lambda: (self.set_mode(Mode.MOVE), True),
+            ord('r'): lambda: (self.set_mode(Mode.RESIZE), True),
+            ord('d'): lambda: (self.set_mode(Mode.DELETE), True),
+            27: lambda: ([cv2.destroyAllWindows(), sys.exit()], False),
+            ord('1'): lambda: (self.row_detector.set_edit_mode(RowEditMode.EDIT), True),
+            ord('2'): lambda: (self.row_detector.set_edit_mode(RowEditMode.ADD), True),
+            ord('0'): lambda: (self.row_detector.set_edit_mode(RowEditMode.NONE), True)
         }
 
         if key in key_actions:
-            return key_actions[key]()
+            action_result, needs_refresh = key_actions[key]()
+            if needs_refresh:
+                return True  # ImageWindow sam wywoła update_display()
+            return action_result
         return False
 
     def _set_row_edit_mode(self, mode):

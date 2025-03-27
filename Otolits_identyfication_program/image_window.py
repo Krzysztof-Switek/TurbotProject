@@ -17,11 +17,10 @@ class ImageWindow:
         self.window_name = "Otolith Annotation Tool"
 
     def _prepare_display_image(self):
-        """Przygotowanie obrazu do wyświetlenia z konwersją kolorów"""
+        """Przygotowanie obrazu do wyświetlenia"""
         if self.current_image is None:
             return None
 
-        # Konwersja do BGR jeśli potrzebne
         if len(self.current_image.shape) == 2:  # Grayscale
             return cv2.cvtColor(self.current_image.copy(), cv2.COLOR_GRAY2BGR)
         elif self.current_image.shape[2] == 4:  # RGBA
@@ -38,9 +37,9 @@ class ImageWindow:
 
         # Dodaj informację o trybie edycji linii jeśli aktywny
         if self.row_detector.edit_mode != RowEditMode.NONE:
-            mode_text += f" | Edycja linii: {self.row_detector.edit_mode.name}"
+            mode_text += f" | Linie: {self.row_detector.edit_mode.name}"
 
-        # Tło dla tekstu dla lepszej czytelności
+        # Tło dla tekstu
         (text_width, text_height), _ = cv2.getTextSize(
             mode_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
 
@@ -64,13 +63,12 @@ class ImageWindow:
         if display_image is None:
             return
 
-        # Narysuj wszystkie istniejące boxy (zielone)
+        # Narysuj boxy i linie
         for box in self.bbox_manager.boxes:
             pt1 = (int(box.x1), int(box.y1))
             pt2 = (int(box.x2), int(box.y2))
             cv2.rectangle(display_image, pt1, pt2, (0, 255, 0), 2)
 
-        # Rysuj linie wierszy (czerwone)
         self.row_detector.draw_rows(display_image)
 
         # Podgląd nowego boxa w trybie MANUAL
@@ -78,19 +76,17 @@ class ImageWindow:
             x1, y1, x2, y2 = map(int, temp_box_coords)
             cv2.rectangle(display_image, (x1, y1), (x2, y2), (0, 0, 255), 2)
 
-        # Wyświetl informację o trybie
         self._draw_mode_info(display_image)
-
         cv2.imshow(self.window_name, display_image)
 
     def show_image(self):
-        """Główna pętla wyświetlania obrazu"""
+        """Główna pętla wyświetlania obrazu z poprawioną reaktywnością"""
         self.current_image = self.image_loader.load_image()
         if self.current_image is None:
             print("Brak zdjęć do wyświetlenia.")
             return
 
-        print(f"\nZaładowany obraz - kształt: {self.current_image.shape}, typ: {self.current_image.dtype}")
+        print(f"Zdjęcie: {self.current_image.shape}, {self.current_image.dtype}")
 
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
         cv2.setMouseCallback(self.window_name, self._handle_mouse_event)
@@ -99,17 +95,26 @@ class ImageWindow:
         while True:
             key = cv2.waitKey(1) & 0xFF
 
-            # Obsługa klawiszy
-            if key == ord('q') or cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) < 1:
+            # Warunki wyjścia
+            if (key == ord('q') or
+                    cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) < 1):
                 break
-            elif key == ord('n'):
+
+            # Obsługa klawiszy
+            if key == ord('n'):
                 self._handle_next_image()
-            else:
-                if self.input_handler.keyboard_callback(key):
-                    self.update_display()
+                continue
+
+            # Obsługa pozostałych klawiszy
+            if self.input_handler.keyboard_callback(key):
+                self.update_display()
+                # Podwójne odświeżenie dla pewności
+                cv2.waitKey(1)
+                cv2.waitKey(1)
 
         cv2.destroyAllWindows()
         sys.exit()
+
 
     def _handle_mouse_event(self, event, x, y, flags, param):
         """Obsługa zdarzeń myszy"""
