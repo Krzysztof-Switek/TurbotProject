@@ -218,25 +218,33 @@ class RowDetector:
         return False
 
     def _update_line_endpoints(self, row: RowLine):
+        """Aktualizuje punkty końcowe linii, kończąc je tuż za ostatnim boxem"""
         if not row.boxes:
+            # Domyślne wartości dla linii bez boxów
             if not row.p1 or not row.p2:
                 row.p1 = (0, row.intercept)
                 row.p2 = (1000, row.intercept)
             return
 
+        # Znajdź skrajne współrzędne x boxów
         x_coords = [b.x1 for b in row.boxes] + [b.x2 for b in row.boxes]
-        min_x, max_x = min(x_coords), max(x_coords)
-        width = max_x - min_x
+        min_x = min(x_coords)
+        max_x = max(x_coords)
 
-        extended_min = min_x - self.line_extension * width
-        extended_max = max_x + self.line_extension * width
+        # Długość linii będzie się kończyć 10 pikseli za ostatnim boxem
+        extension = 10  # Można dostosować tę wartość
 
-        if abs(row.slope) < 0.01:
-            row.p1 = (extended_min, row.intercept)
-            row.p2 = (extended_max, row.intercept)
-        else:
-            row.p1 = (extended_min, row.slope * extended_min + row.intercept)
-            row.p2 = (extended_max, row.slope * extended_max + row.intercept)
+        if abs(row.slope) < 0.01:  # Linia pozioma
+            row.p1 = (min_x - extension, row.intercept)
+            row.p2 = (max_x + extension, row.intercept)
+        elif abs(row.slope) > 100:  # Linia prawie pionowa
+            # Dla linii pionowych zachowujemy oryginalną długość
+            if not row.p1 or not row.p2:
+                row.p1 = (row.intercept, 0)
+                row.p2 = (row.intercept, 1000)
+        else:  # Linia ukośna
+            row.p1 = (min_x - extension, row.slope * (min_x - extension) + row.intercept)
+            row.p2 = (max_x + extension, row.slope * (max_x + extension) + row.intercept)
 
     def _update_line_from_points(self):
         """Aktualizuje parametry linii na podstawie punktów końcowych"""
