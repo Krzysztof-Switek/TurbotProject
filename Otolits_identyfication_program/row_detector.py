@@ -31,8 +31,14 @@ class RowDetector:
 
     # Public methods
     def set_edit_mode(self, mode: RowEditMode):
-        self.edit_mode = mode
-        self._reset_selection()
+        """Ustaw tryb edycji linii z weryfikacją"""
+        if isinstance(mode, RowEditMode):
+            self.edit_mode = mode
+            self.selected_row = None
+            self.drag_start = None
+            self.drag_type = None
+            return True
+        return False
 
     def detect_rows(self) -> List[RowLine]:
         self.rows = []
