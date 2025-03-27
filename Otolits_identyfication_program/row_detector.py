@@ -139,17 +139,26 @@ class RowDetector:
         if not self.selected_row or not self.drag_start or not self.drag_type:
             return False
 
-        dx, dy = x - self.drag_start[0], y - self.drag_start[1]
-
         if self.drag_type == 'move':
-            self.selected_row.intercept += dy
-            self._update_line_endpoints(self.selected_row)
-        elif self.drag_type == 'p1':
-            self.selected_row.p1 = (x, y)
-        elif self.drag_type == 'p2':
-            self.selected_row.p2 = (x, y)
+            # Przesuwanie całej linii
+            dx = x - self.drag_start[0]
+            dy = y - self.drag_start[1]
 
-        if self.drag_type in ['p1', 'p2']:
+            new_p1 = (self.selected_row.p1[0] + dx, self.selected_row.p1[1] + dy)
+            new_p2 = (self.selected_row.p2[0] + dx, self.selected_row.p2[1] + dy)
+
+            self.selected_row.p1 = new_p1
+            self.selected_row.p2 = new_p2
+            self._update_line_from_points()
+
+        elif self.drag_type == 'p1':
+            # Edycja punktu początkowego
+            self.selected_row.p1 = (x, y)
+            self._update_line_from_points()
+
+        elif self.drag_type == 'p2':
+            # Edycja punktu końcowego
+            self.selected_row.p2 = (x, y)
             self._update_line_from_points()
 
         self.drag_start = (x, y)
@@ -230,20 +239,20 @@ class RowDetector:
             row.p2 = (extended_max, row.slope * extended_max + row.intercept)
 
     def _update_line_from_points(self):
+        """Aktualizuje parametry linii na podstawie punktów końcowych"""
         if not self.selected_row or not self.selected_row.p1 or not self.selected_row.p2:
             return
 
         x1, y1 = self.selected_row.p1
         x2, y2 = self.selected_row.p2
 
-        if x1 == x2:
+        # Oblicz nowe parametry linii
+        if x1 == x2:  # Linia pionowa
             self.selected_row.slope = float('inf')
             self.selected_row.intercept = x1
         else:
             self.selected_row.slope = (y2 - y1) / (x2 - x1)
             self.selected_row.intercept = y1 - self.selected_row.slope * x1
-
-        self._update_line_endpoints(self.selected_row)
 
     def _distance_to_line(self, p1, p2, point):
         x1, y1 = p1
