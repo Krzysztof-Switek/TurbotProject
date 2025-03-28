@@ -29,13 +29,13 @@ class RowDetector:
         self.bbox_manager = bbox_manager
         self.rows: List[RowLine] = []
         self.edit_mode = RowEditMode.NONE
-        self.selected_row: Optional[RowLine] = None
-        self.drag_start: Optional[Tuple[int, int]] = None
-        self.drag_type: Optional[str] = None
+        self.selected_row = None
+        self.drag_start = None
+        self.drag_type = None
 
     def set_edit_mode(self, mode: RowEditMode) -> bool:
-        """Ustawia tryb edycji linii."""
-        if isinstance(mode, RowEditMode):
+        """Ustawia tryb edycji linii"""
+        if isinstance(mode, RowEditMode):  # Dodane sprawdzenie typu
             self.edit_mode = mode
             self._reset_selection()
             return True
@@ -43,7 +43,7 @@ class RowDetector:
 
     def handle_mouse_event(self, event, x, y) -> bool:
         """Obsługa zdarzeń myszy w trybie edycji"""
-        if self.edit_mode == RowEditMode.NONE:
+        if not isinstance(self.edit_mode, RowEditMode):
             return False
 
         handlers = {
@@ -218,11 +218,12 @@ class RowDetector:
 
     def _distance_to_line(self, p1: Tuple[float, float], p2: Tuple[float, float],
                           point: Tuple[float, float]) -> float:
+        """Oblicza odległość punktu od linii zdefiniowanej przez p1 i p2"""
         x1, y1 = p1
         x2, y2 = p2
         x0, y0 = point
 
-        if x1 == x2:
+        if x1 == x2:  # Linia pionowa
             return abs(x0 - x1)
 
         A = y2 - y1
@@ -242,3 +243,4 @@ class RowDetector:
         # Dopuszczalna odległość to 20% wysokości boxa
         threshold = (box.y2 - box.y1) * 0.2
         return abs(box_center_y - line_y_at_box_center) < threshold
+

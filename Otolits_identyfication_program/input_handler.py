@@ -2,6 +2,7 @@ from enum import Enum, auto
 import cv2
 import sys
 from row_detector import RowEditMode
+import numpy as np
 
 
 class Mode(Enum):
@@ -33,9 +34,7 @@ class InputHandler:
             "[v] - Tryb przesuwania boxów",
             "[r] - Tryb zmiany rozmiaru",
             "[d] - Tryb usuwania boxów",
-            "[1] - Edycja istniejących linii",
-            "[2] - Dodawanie nowej linii",
-            "[0] - Wyłącz edycję linii",
+            "[1] - Przełącz tryb linii (Dodaj/Edytuj)",
             "[ESC] - Wyjście",
             "=" * 50
         ]
@@ -53,36 +52,30 @@ class InputHandler:
         if isinstance(mode, Mode):
             old_mode = self.mode
             self.mode = mode
-
-            if mode != Mode.DELETE:
-                self.row_detector.set_edit_mode(RowEditMode.NONE)
-
             return old_mode != mode
         return False
 
     def keyboard_callback(self, key):
-        """Obsługa zdarzeń klawiatury z natychmiastowym odświeżaniem"""
+        """Obsługa zdarzeń klawiatury"""
         key_actions = {
-            ord('m'): lambda: (self.set_mode(Mode.MANUAL), True),
-            ord('v'): lambda: (self.set_mode(Mode.MOVE), True),
-            ord('r'): lambda: (self.set_mode(Mode.RESIZE), True),
-            ord('d'): lambda: (self.set_mode(Mode.DELETE), True),
-            27: lambda: ([cv2.destroyAllWindows(), sys.exit()], False),
-            ord('1'): lambda: (self.row_detector.set_edit_mode(RowEditMode.EDIT), True),
-            ord('2'): lambda: (self.row_detector.set_edit_mode(RowEditMode.ADD), True),
-            ord('0'): lambda: (self.row_detector.set_edit_mode(RowEditMode.NONE), True)
+            ord('m'): lambda: self.set_mode(Mode.MANUAL),
+            ord('v'): lambda: self.set_mode(Mode.MOVE),
+            ord('r'): lambda: self.set_mode(Mode.RESIZE),
+            ord('d'): lambda: self.set_mode(Mode.DELETE),
+            27: lambda: [cv2.destroyAllWindows(), sys.exit()],
+            ord('1'): lambda: self._toggle_row_edit_mode(),  # Przełączanie między trybami linii
         }
 
         if key in key_actions:
-            action_result, needs_refresh = key_actions[key]()
-            if needs_refresh:
-                return True  # ImageWindow sam wywoła update_display()
-            return action_result
+            action_result = key_actions[key]()
+            self._update_status()
+            return True
         return False
 
     def _set_row_edit_mode(self, mode):
-        """Ustawia tryb edycji linii"""
+        """Ustawia tryb edycji linii i aktualizuje status"""
         self.row_detector.set_edit_mode(mode)
+        self._update_status()
         return True
 
     def _set_edit_mode(self, mode):
@@ -90,8 +83,13 @@ class InputHandler:
         self.row_detector.set_edit_mode(mode)
         return True
 
-    def mouse_callback(self, event, x, y, flags, param):
-        """Obsługa zdarzeń myszy"""
+    def mouse_callback(self, event, x, y):
+        """Obsługa zdarzeń myszy (uproszczona wersja bez flags i param)"""
+        # Najpierw sprawdź czy jest aktywny tryb edycji linii
+        if self.row_detector.edit_mode != RowEditMode.NONE:
+            return self.row_detector.handle_mouse_event(event, x, y)
+
+        # Jeśli nie, obsłuż normalne tryby
         mode_handlers = {
             Mode.MANUAL: self._handle_manual_mode,
             Mode.MOVE: self._handle_move_mode,
@@ -106,7 +104,7 @@ class InputHandler:
     def reset(self):
         """Resetowanie stanu do domyślnego"""
         self.mode = Mode.AUTO
-        self.row_detector.set_edit_mode(RowEditMode.NONE)
+        self.row_detector.set_edit_mode(RowEditMode.ADD)
         self.start_pos = None
         self.current_pos = None
         self.drawing = False
@@ -115,21 +113,13 @@ class InputHandler:
         self._update_status()
 
     def _update_status(self):
-        """Aktualizacja statusu z wyraźnym wskazaniem aktywnych trybów"""
-        # Definicje stylów
-        ACTIVE_STYLE = "\033[1;32m"  # Pogrubiony zielony
-        MODE_STYLE = "\033[1;34m"  # Pogrubiony niebieski
-        RESET_STYLE = "\033[0m"  # Resetowanie stylów
-
-        # Przygotowanie linii statusu
+        """Aktualizacja statusu z informacją o trybach"""
         status_lines = [
             "=" * 50,
-            f"GŁÓWNY TRYB: {MODE_STYLE}{self.mode.name}{RESET_STYLE}",
+            f"GŁÓWNY TRYB: {self.mode.name}",
             "",
             "EDYCJA LINII:",
-            self._format_option("[1]", "Edytuj istniejące linie", RowEditMode.EDIT),
-            self._format_option("[2]", "Dodaj nową linię", RowEditMode.ADD),
-            self._format_option("[0]", "Wyłącz edycję linii", RowEditMode.NONE),
+            self._format_line_mode("[1]", "Dodaj/Edytuj linie"),
             "",
             "INNE TRYBY:",
             self._format_option("[m]", "Ręczne dodawanie boxów", Mode.MANUAL),
@@ -139,10 +129,7 @@ class InputHandler:
             "[ESC] Wyjście",
             "=" * 50
         ]
-
-        # Czyszczenie konsoli i wyświetlenie statusu
-        print("\033c", end="")  # Czyści konsolę
-        print("\n".join(status_lines))
+        print("\033c" + "\n".join(status_lines))
 
     def _format_option(self, prefix, text, mode_type):
         """Formatuje opcję menu z uwzględnieniem aktywności"""
@@ -225,9 +212,64 @@ class InputHandler:
 
     def _handle_delete_mode(self, event, x, y):
         if event == cv2.EVENT_LBUTTONDOWN:
+            # Najpierw sprawdź czy kliknięto w linię
+            if self._try_delete_row_line(x, y):
+                return True
+
+            # Jeśli nie kliknięto w linię, spróbuj usunąć box
             box = self.bbox_manager.get_box_at(x, y, tolerance=5)
             if box:
                 self.bbox_manager.remove_box(box)
                 return True
         return False
 
+    def _try_delete_row_line(self, x, y):
+        """Próbuje usunąć linię, jeśli kliknięto w jej pobliżu"""
+        if not hasattr(self, 'row_detector') or not self.row_detector.rows:
+            return False
+
+        closest_row = None
+        min_dist = float('inf')
+
+        for row in self.row_detector.rows:
+            if not row.p1 or not row.p2:
+                continue
+
+            # Sprawdź odległość od linii i punktów końcowych
+            line_dist = self.row_detector._distance_to_line(row.p1, row.p2, (x, y))
+            dist_p1 = np.hypot(x - row.p1[0], y - row.p1[1])
+            dist_p2 = np.hypot(x - row.p2[0], y - row.p2[1])
+
+            min_row_dist = min(line_dist, dist_p1, dist_p2)
+            if min_row_dist < 20 and min_row_dist < min_dist:  # 20 pikseli tolerancji
+                min_dist = min_row_dist
+                closest_row = row
+
+        if closest_row:
+            # Usuń tylko linię, pozostawiając boxy
+            self.row_detector.rows.remove(closest_row)
+            return True
+
+        return False
+
+    def _toggle_row_edit_mode(self):
+        """Przełączanie między trybami edycji linii"""
+        if not hasattr(self, 'row_detector'):
+            return False
+
+        if self.row_detector.edit_mode == RowEditMode.NONE:
+            self.row_detector.set_edit_mode(RowEditMode.ADD)
+        elif self.row_detector.edit_mode == RowEditMode.ADD:
+            self.row_detector.set_edit_mode(RowEditMode.EDIT)
+        else:
+            self.row_detector.set_edit_mode(RowEditMode.NONE)
+        return True
+
+    def _format_line_mode(self, prefix, text):
+        ACTIVE_STYLE = "\033[1;32m"
+        RESET_STYLE = "\033[0m"
+
+        if hasattr(self, 'row_detector'):
+            mode_name = "DODAJ" if self.row_detector.edit_mode == RowEditMode.ADD else "EDYTUJ"
+            return f"{prefix} {ACTIVE_STYLE}{text} (AKTYWNY: {mode_name}){RESET_STYLE}"
+        return f"{prefix} {text}"
