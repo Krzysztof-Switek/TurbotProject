@@ -63,3 +63,4 @@ class BoundingBoxManager:
         self.clear_all()
         for data in boxes_data:
             self.boxes.append(BoundingBox.from_dict(data))
+
