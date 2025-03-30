@@ -1,137 +1,168 @@
-from bounding_box import BoundingBox
 from enum import Enum, auto
 import cv2
 from typing import Optional, Tuple
 from dataclasses import dataclass
+from bounding_box import BoundingBox
 
 
 class WorkMode(Enum):
     AUTO = auto()  # Tryb automatyczny (domyślny)
-    MANUAL = auto()  # Tryb manualny (aktywowany klawiszem 'm')
+    MANUAL = auto()  # Tryb manualny
 
 
 class ManualMode(Enum):
-    BOX = auto()  # Edycja bounding boxów
-    LINE = auto()  # Edycja linii wierszy
+    ADD_BOX = auto()  # Dodawanie boxów
+    ADD_LINE = auto()  # Dodawanie linii
+    DELETE = auto()  # Usuwanie elementów
+    MOVE = auto()  # Przesuwanie elementów
 
 
 @dataclass
 class SelectionContext:
-    element: Optional['BoundingBox'] = None
-    drag_start: Optional[Tuple[float, float]] = None
+    element: Optional[object] = None
+    drag_start: Optional[Tuple[int, int]] = None
     is_drawing: bool = False
+    corner_idx: Optional[int] = None
 
 
 class InputHandler:
     def __init__(self, bbox_manager, row_detector):
         self.bbox_manager = bbox_manager
         self.row_detector = row_detector
-        self.work_mode = WorkMode.AUTO  # Domyślnie tryb automatyczny
-        self.manual_mode = ManualMode.BOX  # Domyślny tryb manualny
+        self.work_mode = WorkMode.AUTO
+        self.manual_mode = ManualMode.ADD_BOX
         self.selection = SelectionContext()
 
-        # Mapa przycisków klawiatury
+        # Uproszczona mapa klawiszy
         self.key_bindings = {
-            ord('m'): self._toggle_work_mode,  # Przełączanie trybu pracy
-            ord('b'): lambda: self._set_manual_mode(ManualMode.BOX),
-            ord('l'): lambda: self._set_manual_mode(ManualMode.LINE),
-            8: self._delete_selected,  # Backspace - usuń zaznaczenie
-            27: self._reset_selection  # ESC - anuluj
+            ord('a'): lambda: self._set_work_mode(WorkMode.AUTO),
+            ord('m'): lambda: self._set_work_mode(WorkMode.MANUAL),
+            ord('b'): lambda: self._set_manual_mode(ManualMode.ADD_BOX),
+            ord('l'): lambda: self._set_manual_mode(ManualMode.ADD_LINE),
+            ord('d'): lambda: self._set_manual_mode(ManualMode.DELETE),
+            ord('v'): lambda: self._set_manual_mode(ManualMode.MOVE),
+            27: self._reset_selection  # ESC
         }
 
-    def keyboard_callback(self, key):
+    def get_mode_info(self) -> str:
+        """Zwraca tekst informujący o aktualnym trybie"""
+        mode_info = f"Tryb: {'AUTO' if self.work_mode == WorkMode.AUTO else 'MANUAL'}"
+
+        if self.work_mode == WorkMode.MANUAL:
+            mode_names = {
+                ManualMode.ADD_BOX: "Dodawanie boxów",
+                ManualMode.ADD_LINE: "Dodawanie linii",
+                ManualMode.DELETE: "Usuwanie",
+                ManualMode.MOVE: "Przesuwanie"
+            }
+            mode_info += f" | {mode_names[self.manual_mode]}"
+
+        return mode_info
+
+    def keyboard_callback(self, key: int) -> bool:
+        """Obsługa zdarzeń klawiatury"""
         if key in self.key_bindings:
             self.key_bindings[key]()
-            print(f"Tryb: {'AUTO' if self.work_mode == WorkMode.AUTO else 'MANUAL'}")
-            if self.work_mode == WorkMode.MANUAL:
-                print(f"Tryb manualny: {'BOX' if self.manual_mode == ManualMode.BOX else 'LINE'}")
+            print(f"\n{self.get_mode_info()}")
             return True
         return False
 
-    def mouse_callback(self, event, x, y):
+    def mouse_callback(self, event, x, y) -> bool:
+        """Obsługa zdarzeń myszy"""
         if self.work_mode == WorkMode.AUTO:
             return False
 
         handlers = {
-            cv2.EVENT_LBUTTONDOWN: self._handle_click,
-            cv2.EVENT_MOUSEMOVE: self._handle_drag,
-            cv2.EVENT_LBUTTONUP: self._handle_release
+            cv2.EVENT_LBUTTONDOWN: self._handle_left_down,
+            cv2.EVENT_MOUSEMOVE: self._handle_mouse_move,
+            cv2.EVENT_LBUTTONUP: self._handle_left_up
         }
         return handlers.get(event, lambda *_: False)(x, y)
 
-    def _toggle_work_mode(self):
-        """Przełączanie między trybem AUTO i MANUAL"""
-        self.work_mode = WorkMode.MANUAL if self.work_mode == WorkMode.AUTO else WorkMode.AUTO
-        self._reset_selection()
-
-    def _set_manual_mode(self, mode):
-        """Ustawia tryb manualny (BOX/LINE)"""
-        if self.work_mode == WorkMode.MANUAL:
-            self.manual_mode = mode
-            self._reset_selection()
-
-    def _handle_click(self, x, y):
-        if self.work_mode != WorkMode.MANUAL:
-            return False
-
+    def _handle_left_down(self, x: int, y: int) -> bool:
+        """Obsługa wciśnięcia LPM"""
         self.selection.is_drawing = True
 
-        if self.manual_mode == ManualMode.BOX:
+        if self.manual_mode == ManualMode.ADD_BOX:
             self.selection.element = BoundingBox(x, y, x, y, is_temp=True)
-        else:
+        elif self.manual_mode == ManualMode.ADD_LINE:
             self.row_detector.start_new_line(x, y)
+        elif self.manual_mode == ManualMode.DELETE:
+            # Najpierw sprawdzamy boxy, potem linie
+            if box := self.bbox_manager.get_box_at(x, y):
+                self.bbox_manager.remove_box(box)
+                return True
+            elif line := self.row_detector.get_line_at(x, y):
+                self.row_detector.remove_line(line)
+                return True
+        elif self.manual_mode == ManualMode.MOVE:
+            if box := self.bbox_manager.get_box_at(x, y):
+                self.selection.element = box
+            elif line := self.row_detector.get_line_at(x, y):
+                self.selection.element = line
 
         self.selection.drag_start = (x, y)
         return True
 
-    def _handle_drag(self, x, y):
-        """Obsługa przeciągania myszą w trybie manualnym"""
+    def _handle_mouse_move(self, x: int, y: int) -> bool:
+        """Obsługa ruchu myszą"""
         if not self.selection.is_drawing:
             return False
 
-        if self.manual_mode == ManualMode.BOX and self.selection.element:
-            # Aktualizuj współrzędne boxa
+        if self.manual_mode == ManualMode.ADD_LINE:
+            self.row_detector.update_line_end(x, y)
+            return True
+
+        if not self.selection.element:
+            return False
+
+        dx, dy = x - self.selection.drag_start[0], y - self.selection.drag_start[1]
+        self.selection.drag_start = (x, y)
+
+        if self.manual_mode == ManualMode.ADD_BOX:
             self.selection.element.x2 = x
             self.selection.element.y2 = y
-        elif self.manual_mode == ManualMode.LINE:
-            self.row_detector.update_line_end(x, y)
+        elif self.manual_mode == ManualMode.MOVE:
+            if hasattr(self.selection.element, 'move'):
+                self.selection.element.move(dx, dy)
 
         return True
 
-    def _handle_release(self, x, y):
+    def _handle_left_up(self, x: int, y: int) -> bool:
+        """Obsługa zwolnienia LPM"""
         if not self.selection.is_drawing:
             return False
 
         self.selection.is_drawing = False
 
-        if self.manual_mode == ManualMode.BOX and self.selection.element:
-            # Tworzymy finalny box po zwolnieniu przycisku
-            temp_box = self.selection.element
+        if self.manual_mode == ManualMode.ADD_BOX and self.selection.element:
             final_box = BoundingBox(
-                min(temp_box.x1, x),
-                min(temp_box.y1, y),
-                max(temp_box.x1, x),
-                max(temp_box.y1, y),
+                min(self.selection.element.x1, x),
+                min(self.selection.element.y1, y),
+                max(self.selection.element.x1, x),
+                max(self.selection.element.y1, y),
                 is_temp=False
             )
             self.bbox_manager.add_box(final_box)
-
-        elif self.manual_mode == ManualMode.LINE:
-            self.row_detector.assign_boxes_to_current_line()
+        elif self.manual_mode == ManualMode.ADD_LINE:
+            self.row_detector.finish_line()
 
         self._reset_selection()
         return True
 
-    def _delete_selected(self):
-        """Usuwa zaznaczony element (box/linię)"""
-        if self.work_mode == WorkMode.MANUAL:
-            # W tej uproszczonej wersji usuwamy ostatni element
-            if self.manual_mode == ManualMode.BOX and self.bbox_manager.boxes:
-                self.bbox_manager.boxes.pop()
-            elif self.manual_mode == ManualMode.LINE and self.row_detector.rows:
-                self.row_detector.rows.pop()
-        return True
-
-    def _reset_selection(self):
+    def _reset_selection(self) -> None:
         """Resetuje stan zaznaczenia"""
         self.selection = SelectionContext()
+
+    def _set_work_mode(self, mode: WorkMode) -> None:
+        """Ustawia tryb pracy (AUTO/MANUAL)"""
+        self.work_mode = mode
+        self._reset_selection()
+        print(f"Aktywny tryb: {'AUTO' if mode == WorkMode.AUTO else 'MANUAL'}")
+
+    def _set_manual_mode(self, mode: ManualMode) -> None:
+        """Ustawia tryb manualny"""
+        if self.work_mode == WorkMode.MANUAL:
+            self.manual_mode = mode
+            self._reset_selection()
+            print(f"Tryb manualny: {mode.name}")

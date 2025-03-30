@@ -126,7 +126,8 @@ class ImageWindow:
             return
 
         if self.input_handler.mouse_callback(event, x, y):
-            self.update_display()
+            self.update_display()  # Ważne - odświeżanie po każdym zdarzeniu
+            cv2.waitKey(1)  # Dodatkowe odświeżenie
 
     def _handle_next_image(self):
         """Obsługa przejścia do następnego obrazu"""
@@ -169,3 +170,4 @@ class ImageWindow:
 
         except Exception as e:
             print(f"Błąd podczas wycinania boxów: {str(e)}")
+
