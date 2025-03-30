@@ -84,3 +84,4 @@ class ImageLoader:
             int(x2 * scale_factor),
             int(y2 * scale_factor)
         )
+

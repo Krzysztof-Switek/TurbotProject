@@ -273,3 +273,4 @@ class InputHandler:
             mode_name = "DODAJ" if self.row_detector.edit_mode == RowEditMode.ADD else "EDYTUJ"
             return f"{prefix} {ACTIVE_STYLE}{text} (AKTYWNY: {mode_name}){RESET_STYLE}"
         return f"{prefix} {text}"
+

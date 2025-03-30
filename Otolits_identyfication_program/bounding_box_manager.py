@@ -1,64 +1,65 @@
 import numpy as np
-import cv2
 from bounding_box import BoundingBox
+from typing import List, Optional
+
 
 class BoundingBoxManager:
-    def __init__(self, image_shape):
-        self.boxes = []
+    def __init__(self):
+        self.boxes: List[BoundingBox] = []
 
-    def add_box(self, x1, y1, x2, y2, label=None):
+    # Podstawowe operacje CRUD
+    def add_box(self, x1: float, y1: float, x2: float, y2: float, label: Optional[str] = None) -> BoundingBox:
+        """Dodaje nowy bounding box z automatyczną walidacją współrzędnych"""
         new_box = BoundingBox(x1, y1, x2, y2, label)
         self.boxes.append(new_box)
-        print(f"Dodano box: ({x1},{y1})-({x2},{y2})")
-        print(f"Aktualna liczba boxów: {len(self.boxes)}")
         return new_box
 
-    def remove_box(self, box):
-        if box in self.boxes:
+    def remove_box(self, box: BoundingBox) -> bool:
+        """Usuwa box i zwraca status operacji"""
+        try:
             self.boxes.remove(box)
-            print(f"Usunięto box: {box}")
-            print(f"Aktualna liczba boxów: {len(self.boxes)}")
-        else:
-            print("Błąd: Box nie istnieje")
+            return True
+        except ValueError:
+            return False
 
-    def update_box(self, box, x1, y1, x2, y2):
+    def update_box(self, box: BoundingBox, x1: float, y1: float, x2: float, y2: float) -> None:
+        """Aktualizuje współrzędne istniejącego boxa"""
         if box not in self.boxes:
-            raise ValueError("Box nie istnieje w managerze")
+            raise ValueError("Box nie jest zarządzany przez ten manager")
         box.update(x1, y1, x2, y2)
-        self.update_box_layer()
 
-    def get_boxes(self):
-        return self.boxes.copy()  # Zwracamy kopię dla bezpieczeństwa
+    # Operacje zapytaniowe
+    def get_boxes(self) -> List[BoundingBox]:
+        """Zwraca kopię listy boxów (bezpieczne użycie zewnętrzne)"""
+        return self.boxes.copy()
 
-    def get_box_at(self, x, y, tolerance=5):
-        for box in reversed(self.boxes):
+    def get_box_at(self, x: float, y: float, tolerance: float = 5.0) -> Optional[BoundingBox]:
+        """Znajduje box zawierający punkt (x,y) z tolerancją"""
+        for box in reversed(self.boxes):  # Sprawdzamy od najnowszych
             if box.contains(x, y, tolerance):
                 return box
         return None
 
-    def update_box_layer(self):
-        # Metoda może być pusta, ponieważ boxy są rysowane bezpośrednio
-        pass
+    # Operacje masowe
+    def clear_all(self) -> None:
+        """Usuwa wszystkie boxy"""
+        self.boxes.clear()
 
-    def get_box_layer(self):
-        # Zwraca pustą warstwę, ponieważ nie używamy już nakładania warstw
-        return np.zeros_like(self.box_layer)
+    def get_boxes_sorted(self, by: str = 'area', reverse: bool = False) -> List[BoundingBox]:
+        """Sortuje boxy według wybranej właściwości"""
+        valid_attributes = {'area', 'width', 'height', 'aspect_ratio'}
+        if by not in valid_attributes:
+            raise ValueError(f"Nieprawidłowy atrybut sortowania. Dozwolone: {valid_attributes}")
 
-    def clear_all(self):
-        self.boxes = []
-        self.update_box_layer()
+        return sorted(self.boxes, key=lambda b: getattr(b, by)(), reverse=reverse)
 
-    def get_boxes_sorted(self, by='area', reverse=False):
-        return sorted(self.boxes,
-                     key=lambda b: getattr(b, by)(),
-                     reverse=reverse)
-
-    def to_list(self):
+    # Serializacja
+    def to_list(self) -> List[dict]:
+        """Eksport boxów do listy słowników"""
         return [box.to_dict() for box in self.boxes]
 
-    def from_list(self, boxes_data):
+    def from_list(self, boxes_data: List[dict]) -> None:
+        """Import boxów z listy słowników"""
         self.clear_all()
         for data in boxes_data:
             self.boxes.append(BoundingBox.from_dict(data))
-        self.update_box_layer()
-
