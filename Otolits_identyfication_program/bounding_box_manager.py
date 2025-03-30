@@ -8,9 +8,17 @@ class BoundingBoxManager:
         self.boxes: List[BoundingBox] = []
 
     # Podstawowe operacje CRUD
-    def add_box(self, x1: float, y1: float, x2: float, y2: float, label: Optional[str] = None) -> BoundingBox:
-        """Dodaje nowy bounding box z automatyczną walidacją współrzędnych"""
-        new_box = BoundingBox(x1, y1, x2, y2, label)
+    def add_box(self, x1_or_box, y1=None, x2=None, y2=None, label=None) -> BoundingBox:
+        """Dodaje nowy bounding box - akceptuje współrzędne lub obiekt BoundingBox"""
+        if isinstance(x1_or_box, BoundingBox):
+            # Jeśli przekazano już obiekt BoundingBox
+            new_box = x1_or_box
+        else:
+            # Jeśli przekazano współrzędne
+            if None in (y1, x2, y2):
+                raise ValueError("Należy podać wszystkie 4 współrzędne (x1, y1, x2, y2)")
+            new_box = BoundingBox(x1_or_box, y1, x2, y2, label)
+
         self.boxes.append(new_box)
         return new_box
 
@@ -34,6 +42,8 @@ class BoundingBoxManager:
         return self.boxes.copy()
 
     def get_box_at(self, x: float, y: float, tolerance: float = 5.0) -> Optional[BoundingBox]:
+        if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+            return None
         """Znajduje box zawierający punkt (x,y) z tolerancją"""
         for box in reversed(self.boxes):  # Sprawdzamy od najnowszych
             if box.contains(x, y, tolerance):
@@ -44,14 +54,6 @@ class BoundingBoxManager:
     def clear_all(self) -> None:
         """Usuwa wszystkie boxy"""
         self.boxes.clear()
-
-    def get_boxes_sorted(self, by: str = 'area', reverse: bool = False) -> List[BoundingBox]:
-        """Sortuje boxy według wybranej właściwości"""
-        valid_attributes = {'area', 'width', 'height', 'aspect_ratio'}
-        if by not in valid_attributes:
-            raise ValueError(f"Nieprawidłowy atrybut sortowania. Dozwolone: {valid_attributes}")
-
-        return sorted(self.boxes, key=lambda b: getattr(b, by)(), reverse=reverse)
 
     # Serializacja
     def to_list(self) -> List[dict]:

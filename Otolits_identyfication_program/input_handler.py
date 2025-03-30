@@ -1,276 +1,137 @@
+from bounding_box import BoundingBox
 from enum import Enum, auto
 import cv2
-import sys
-from row_detector import RowEditMode
-import numpy as np
+from typing import Optional, Tuple
+from dataclasses import dataclass
 
 
-class Mode(Enum):
-    AUTO = auto()
-    MANUAL = auto()
-    MOVE = auto()
-    RESIZE = auto()
-    DELETE = auto()
+class WorkMode(Enum):
+    AUTO = auto()  # Tryb automatyczny (domyślny)
+    MANUAL = auto()  # Tryb manualny (aktywowany klawiszem 'm')
+
+
+class ManualMode(Enum):
+    BOX = auto()  # Edycja bounding boxów
+    LINE = auto()  # Edycja linii wierszy
+
+
+@dataclass
+class SelectionContext:
+    element: Optional['BoundingBox'] = None
+    drag_start: Optional[Tuple[float, float]] = None
+    is_drawing: bool = False
 
 
 class InputHandler:
-    def __init__(self, bounding_box_manager, row_detector):
-        self.bbox_manager = bounding_box_manager
+    def __init__(self, bbox_manager, row_detector):
+        self.bbox_manager = bbox_manager
         self.row_detector = row_detector
-        self.mode = Mode.AUTO
-        self.start_pos = None
-        self.current_pos = None
-        self.drawing = False
-        self.selected_box = None
-        self.drag_offset = None
-        self._show_initial_status()  # Pokaz status tylko raz przy starcie
+        self.work_mode = WorkMode.AUTO  # Domyślnie tryb automatyczny
+        self.manual_mode = ManualMode.BOX  # Domyślny tryb manualny
+        self.selection = SelectionContext()
 
-    def _show_initial_status(self):
-        """Pokazuje status tylko raz przy inicjalizacji"""
-        status_lines = [
-            "=" * 50,
-            "Dostępne tryby pracy:",
-            "[m] - Tryb manualny (dodawanie boxów)",
-            "[v] - Tryb przesuwania boxów",
-            "[r] - Tryb zmiany rozmiaru",
-            "[d] - Tryb usuwania boxów",
-            "[1] - Przełącz tryb linii (Dodaj/Edytuj)",
-            "[ESC] - Wyjście",
-            "=" * 50
-        ]
-        print("\n".join(status_lines))
-
-    def get_current_mode_text(self):
-        """Generuje tekst do wyświetlenia na obrazie"""
-        mode_text = f"Tryb: {self.mode.name}"
-        if self.row_detector.edit_mode != RowEditMode.NONE:
-            mode_text += f" | Edycja linii: {self.row_detector.edit_mode.name}"
-        return mode_text
-
-    def set_mode(self, mode):
-        """Zmiana trybu pracy"""
-        if isinstance(mode, Mode):
-            old_mode = self.mode
-            self.mode = mode
-            return old_mode != mode
-        return False
+        # Mapa przycisków klawiatury
+        self.key_bindings = {
+            ord('m'): self._toggle_work_mode,  # Przełączanie trybu pracy
+            ord('b'): lambda: self._set_manual_mode(ManualMode.BOX),
+            ord('l'): lambda: self._set_manual_mode(ManualMode.LINE),
+            8: self._delete_selected,  # Backspace - usuń zaznaczenie
+            27: self._reset_selection  # ESC - anuluj
+        }
 
     def keyboard_callback(self, key):
-        """Obsługa zdarzeń klawiatury"""
-        key_actions = {
-            ord('m'): lambda: self.set_mode(Mode.MANUAL),
-            ord('v'): lambda: self.set_mode(Mode.MOVE),
-            ord('r'): lambda: self.set_mode(Mode.RESIZE),
-            ord('d'): lambda: self.set_mode(Mode.DELETE),
-            27: lambda: [cv2.destroyAllWindows(), sys.exit()],
-            ord('1'): lambda: self._toggle_row_edit_mode(),  # Przełączanie między trybami linii
-        }
-
-        if key in key_actions:
-            action_result = key_actions[key]()
-            self._update_status()
+        if key in self.key_bindings:
+            self.key_bindings[key]()
+            print(f"Tryb: {'AUTO' if self.work_mode == WorkMode.AUTO else 'MANUAL'}")
+            if self.work_mode == WorkMode.MANUAL:
+                print(f"Tryb manualny: {'BOX' if self.manual_mode == ManualMode.BOX else 'LINE'}")
             return True
         return False
-
-    def _set_row_edit_mode(self, mode):
-        """Ustawia tryb edycji linii i aktualizuje status"""
-        self.row_detector.set_edit_mode(mode)
-        self._update_status()
-        return True
-
-    def _set_edit_mode(self, mode):
-        """Ustawia tryb edycji linii i wymusza aktualizację statusu"""
-        self.row_detector.set_edit_mode(mode)
-        return True
 
     def mouse_callback(self, event, x, y):
-        """Obsługa zdarzeń myszy (uproszczona wersja bez flags i param)"""
-        # Najpierw sprawdź czy jest aktywny tryb edycji linii
-        if self.row_detector.edit_mode != RowEditMode.NONE:
-            return self.row_detector.handle_mouse_event(event, x, y)
+        if self.work_mode == WorkMode.AUTO:
+            return False
 
-        # Jeśli nie, obsłuż normalne tryby
-        mode_handlers = {
-            Mode.MANUAL: self._handle_manual_mode,
-            Mode.MOVE: self._handle_move_mode,
-            Mode.RESIZE: self._handle_resize_mode,
-            Mode.DELETE: self._handle_delete_mode
+        handlers = {
+            cv2.EVENT_LBUTTONDOWN: self._handle_click,
+            cv2.EVENT_MOUSEMOVE: self._handle_drag,
+            cv2.EVENT_LBUTTONUP: self._handle_release
         }
+        return handlers.get(event, lambda *_: False)(x, y)
 
-        if self.mode in mode_handlers:
-            return mode_handlers[self.mode](event, x, y)
-        return False
+    def _toggle_work_mode(self):
+        """Przełączanie między trybem AUTO i MANUAL"""
+        self.work_mode = WorkMode.MANUAL if self.work_mode == WorkMode.AUTO else WorkMode.AUTO
+        self._reset_selection()
 
-    def reset(self):
-        """Resetowanie stanu do domyślnego"""
-        self.mode = Mode.AUTO
-        self.row_detector.set_edit_mode(RowEditMode.ADD)
-        self.start_pos = None
-        self.current_pos = None
-        self.drawing = False
-        self.selected_box = None
-        self.drag_offset = None
-        self._update_status()
+    def _set_manual_mode(self, mode):
+        """Ustawia tryb manualny (BOX/LINE)"""
+        if self.work_mode == WorkMode.MANUAL:
+            self.manual_mode = mode
+            self._reset_selection()
 
-    def _update_status(self):
-        """Aktualizacja statusu z informacją o trybach"""
-        status_lines = [
-            "=" * 50,
-            f"GŁÓWNY TRYB: {self.mode.name}",
-            "",
-            "EDYCJA LINII:",
-            self._format_line_mode("[1]", "Dodaj/Edytuj linie"),
-            "",
-            "INNE TRYBY:",
-            self._format_option("[m]", "Ręczne dodawanie boxów", Mode.MANUAL),
-            self._format_option("[v]", "Przesuwanie boxów", Mode.MOVE),
-            self._format_option("[r]", "Zmiana rozmiaru boxów", Mode.RESIZE),
-            self._format_option("[d]", "Usuwanie boxów/linii", Mode.DELETE),
-            "[ESC] Wyjście",
-            "=" * 50
-        ]
-        print("\033c" + "\n".join(status_lines))
-
-    def _format_option(self, prefix, text, mode_type):
-        """Formatuje opcję menu z uwzględnieniem aktywności"""
-        ACTIVE_STYLE = "\033[1;32m"
-        RESET_STYLE = "\033[0m"
-
-        if isinstance(mode_type, RowEditMode):
-            is_active = self.row_detector.edit_mode == mode_type
-        else:
-            is_active = self.mode == mode_type
-
-        if is_active:
-            return f"{prefix} {ACTIVE_STYLE}{text.upper()} (AKTYWNY){RESET_STYLE}"
-        return f"{prefix} {text}"
-
-    def _handle_manual_mode(self, event, x, y):
-        if event == cv2.EVENT_LBUTTONDOWN:
-            self.start_pos = (x, y)
-            self.current_pos = (x, y)
-            self.drawing = True
-            return True
-
-        elif event == cv2.EVENT_MOUSEMOVE and self.drawing:
-            self.current_pos = (x, y)
-            return True
-
-        elif event == cv2.EVENT_LBUTTONUP and self.drawing:
-            x1, y1 = self.start_pos
-            x2, y2 = x, y
-            x1, x2 = sorted([x1, x2])
-            y1, y2 = sorted([y1, y2])
-
-            if abs(x2 - x1) > 10 and abs(y2 - y1) > 10:
-                self.bbox_manager.add_box(x1, y1, x2, y2)
-
-            self.drawing = False
-            self.start_pos = None
-            self.current_pos = None
-            return True
-
-        return False
-
-    def _handle_move_mode(self, event, x, y):
-        if event == cv2.EVENT_LBUTTONDOWN:
-            box = self.bbox_manager.get_box_at(x, y, tolerance=5)
-            if box:
-                self.selected_box = box
-                self.drag_offset = (x - box.x1, y - box.y1)
-                return True
-
-        elif event == cv2.EVENT_MOUSEMOVE and self.selected_box:
-            dx = x - self.selected_box.x1 - self.drag_offset[0]
-            dy = y - self.selected_box.y1 - self.drag_offset[1]
-            self.selected_box.move(dx, dy)
-            return True
-
-        elif event == cv2.EVENT_LBUTTONUP and self.selected_box:
-            self.selected_box = None
-            return True
-
-        return False
-
-    def _handle_resize_mode(self, event, x, y):
-        if event == cv2.EVENT_LBUTTONDOWN:
-            box = self.bbox_manager.get_box_at(x, y, tolerance=10)
-            if box:
-                self.selected_box = box
-                self.drag_corner = box.get_nearest_corner(x, y)
-                return True
-
-        elif event == cv2.EVENT_MOUSEMOVE and self.selected_box:
-            self.selected_box.resize(self.drag_corner, x, y)
-            return True
-
-        elif event == cv2.EVENT_LBUTTONUP and self.selected_box:
-            self.selected_box = None
-            return True
-
-        return False
-
-    def _handle_delete_mode(self, event, x, y):
-        if event == cv2.EVENT_LBUTTONDOWN:
-            # Najpierw sprawdź czy kliknięto w linię
-            if self._try_delete_row_line(x, y):
-                return True
-
-            # Jeśli nie kliknięto w linię, spróbuj usunąć box
-            box = self.bbox_manager.get_box_at(x, y, tolerance=5)
-            if box:
-                self.bbox_manager.remove_box(box)
-                return True
-        return False
-
-    def _try_delete_row_line(self, x, y):
-        """Próbuje usunąć linię, jeśli kliknięto w jej pobliżu"""
-        if not hasattr(self, 'row_detector') or not self.row_detector.rows:
+    def _handle_click(self, x, y):
+        if self.work_mode != WorkMode.MANUAL:
             return False
 
-        closest_row = None
-        min_dist = float('inf')
+        self.selection.is_drawing = True
 
-        for row in self.row_detector.rows:
-            if not row.p1 or not row.p2:
-                continue
-
-            # Sprawdź odległość od linii i punktów końcowych
-            line_dist = self.row_detector._distance_to_line(row.p1, row.p2, (x, y))
-            dist_p1 = np.hypot(x - row.p1[0], y - row.p1[1])
-            dist_p2 = np.hypot(x - row.p2[0], y - row.p2[1])
-
-            min_row_dist = min(line_dist, dist_p1, dist_p2)
-            if min_row_dist < 20 and min_row_dist < min_dist:  # 20 pikseli tolerancji
-                min_dist = min_row_dist
-                closest_row = row
-
-        if closest_row:
-            # Usuń tylko linię, pozostawiając boxy
-            self.row_detector.rows.remove(closest_row)
-            return True
-
-        return False
-
-    def _toggle_row_edit_mode(self):
-        """Przełączanie między trybami edycji linii"""
-        if not hasattr(self, 'row_detector'):
-            return False
-
-        if self.row_detector.edit_mode == RowEditMode.NONE:
-            self.row_detector.set_edit_mode(RowEditMode.ADD)
-        elif self.row_detector.edit_mode == RowEditMode.ADD:
-            self.row_detector.set_edit_mode(RowEditMode.EDIT)
+        if self.manual_mode == ManualMode.BOX:
+            self.selection.element = BoundingBox(x, y, x, y, is_temp=True)
         else:
-            self.row_detector.set_edit_mode(RowEditMode.NONE)
+            self.row_detector.start_new_line(x, y)
+
+        self.selection.drag_start = (x, y)
         return True
 
-    def _format_line_mode(self, prefix, text):
-        ACTIVE_STYLE = "\033[1;32m"
-        RESET_STYLE = "\033[0m"
+    def _handle_drag(self, x, y):
+        """Obsługa przeciągania myszą w trybie manualnym"""
+        if not self.selection.is_drawing:
+            return False
 
-        if hasattr(self, 'row_detector'):
-            mode_name = "DODAJ" if self.row_detector.edit_mode == RowEditMode.ADD else "EDYTUJ"
-            return f"{prefix} {ACTIVE_STYLE}{text} (AKTYWNY: {mode_name}){RESET_STYLE}"
-        return f"{prefix} {text}"
+        if self.manual_mode == ManualMode.BOX and self.selection.element:
+            # Aktualizuj współrzędne boxa
+            self.selection.element.x2 = x
+            self.selection.element.y2 = y
+        elif self.manual_mode == ManualMode.LINE:
+            self.row_detector.update_line_end(x, y)
 
+        return True
+
+    def _handle_release(self, x, y):
+        if not self.selection.is_drawing:
+            return False
+
+        self.selection.is_drawing = False
+
+        if self.manual_mode == ManualMode.BOX and self.selection.element:
+            # Tworzymy finalny box po zwolnieniu przycisku
+            temp_box = self.selection.element
+            final_box = BoundingBox(
+                min(temp_box.x1, x),
+                min(temp_box.y1, y),
+                max(temp_box.x1, x),
+                max(temp_box.y1, y),
+                is_temp=False
+            )
+            self.bbox_manager.add_box(final_box)
+
+        elif self.manual_mode == ManualMode.LINE:
+            self.row_detector.assign_boxes_to_current_line()
+
+        self._reset_selection()
+        return True
+
+    def _delete_selected(self):
+        """Usuwa zaznaczony element (box/linię)"""
+        if self.work_mode == WorkMode.MANUAL:
+            # W tej uproszczonej wersji usuwamy ostatni element
+            if self.manual_mode == ManualMode.BOX and self.bbox_manager.boxes:
+                self.bbox_manager.boxes.pop()
+            elif self.manual_mode == ManualMode.LINE and self.row_detector.rows:
+                self.row_detector.rows.pop()
+        return True
+
+    def _reset_selection(self):
+        """Resetuje stan zaznaczenia"""
+        self.selection = SelectionContext()
