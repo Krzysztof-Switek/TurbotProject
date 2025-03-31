@@ -60,14 +60,14 @@ class RowDetector:
             cv2.line(image,
                      (int(row.p1[0]), int(row.p1[1])),
                      (int(row.p2[0]), int(row.p2[1])),
-                     row.color, 3)  # Zwiększona grubość do 3px
+                     row.color, 2)  # Zwiększona grubość do 3px
 
         # Rysowanie aktualnie tworzonej linii (przerywana)
         if self.current_line and self.drawing_started:
             cv2.line(image,
                      (int(self.current_line.p1[0]), int(self.current_line.p1[1])),
                      (int(self.current_line.p2[0]), int(self.current_line.p2[1])),
-                     self.current_line.color, 2, cv2.LINE_AA)  # Używamy current_line zamiast row
+                     self.current_line.color, 1, cv2.LINE_AA)  # Używamy current_line zamiast row
 
 
     def clear_rows(self) -> None:
@@ -151,3 +151,5 @@ class RowDetector:
     #     C = x2 * y1 - x1 * y2
     #
     #     return abs(A * x0 + B * y0 + C) / (A ** 2 + B ** 2) ** 0.5
+
+

@@ -153,25 +153,56 @@ class ImageLoader:
             return cv2.rotate(image, cv2.ROTATE_90_COUNTERCLOCKWISE)
         return image
 
-    def get_original_image(self) -> Optional[np.ndarray]:
-        """Zwraca kopię oryginalnego obrazu"""
-        return self.original_image.copy() if self.original_image is not None else None
+    def get_original_image(self, copy: bool = True) -> Optional[np.ndarray]:
+        """Zwraca oryginalny obraz (opcjonalnie kopię).
+
+        Args:
+            copy: Jeśli True (domyślnie), zwraca kopię obrazu.
+                  Jeśli False, zwraca referencję (uważaj na modyfikacje!)
+
+        Returns:
+            Oryginalny obraz w formacie BGR lub None jeśli brak
+        """
+        if self.original_image is None:
+            return None
+        return self.original_image.copy() if copy else self.original_image
 
     def scale_coords_to_original(self,
                                  x1: int,
                                  y1: int,
                                  x2: int,
                                  y2: int) -> Tuple[int, int, int, int]:
-        """Transformuje współrzędne z podglądu do oryginału"""
+        """Transformuje współrzędne z podglądu do oryginału.
+
+        Args:
+            x1, y1: Lewy górny róg
+            x2, y2: Prawy dolny róg
+
+        Returns:
+            Krotka ze współrzędnymi w oryginalnej skali
+
+        Raises:
+            ValueError: Jeśli współrzędne są nieprawidłowe lub skala niezainicjowana
+        """
         if not hasattr(self, 'scale') or self.scale <= 0:
-            return x1, y1, x2, y2
+            raise ValueError("Skala nie została poprawnie zainicjowana")
+
+        if x1 > x2 or y1 > y2:
+            raise ValueError("Nieprawidłowe współrzędne (x1>x2 lub y1>y2)")
 
         return (
-            int(x1 / self.scale),
-            int(y1 / self.scale),
-            int(x2 / self.scale),
-            int(y2 / self.scale)
+            max(0, int(x1 / self.scale)),
+            max(0, int(y1 / self.scale)),
+            min(self.original_size[0], int(x2 / self.scale)),
+            min(self.original_size[1], int(y2 / self.scale))
         )
+
+    def clear(self) -> None:
+        """Zwalnia zasoby pamięci zajmowane przez obecny obraz."""
+        self.image = None
+        self.original_image = None
+        if hasattr(self, 'scale'):
+            del self.scale
 
     @property
     def current_image_path(self) -> Optional[str]:

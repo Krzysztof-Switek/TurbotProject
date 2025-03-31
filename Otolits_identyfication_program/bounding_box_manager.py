@@ -42,9 +42,9 @@ class BoundingBoxManager:
         return self.boxes.copy()
 
     def get_box_at(self, x: float, y: float, tolerance: float = 5.0) -> Optional[BoundingBox]:
+        """Znajduje box zawierający punkt (x,y) z tolerancją"""
         if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
             return None
-        """Znajduje box zawierający punkt (x,y) z tolerancją"""
         for box in reversed(self.boxes):  # Sprawdzamy od najnowszych
             if box.contains(x, y, tolerance):
                 return box

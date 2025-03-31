@@ -33,19 +33,16 @@ if __name__ == "__main__":
         input_handler = InputHandler(bbox_manager, row_detector)
 
         print("\nSterowanie:")
-        print("m - tryb manualny (dodawanie boxów)")
-        print("v - tryb przesuwania boxów")
+        print("m - tryb manualny")
+        print("v - tryb przesuwania")
         print("r - tryb zmiany rozmiaru")
-        print("d - tryb usuwania boxów")
+        print("d - tryb usuwania")
         print("n - następny obraz")
-        print("PRAWY KLIK - wykryj wiersze")
         print("q - wyjście")
 
         ImageWindow(image_loader, bbox_manager, input_handler).show_image()
-
 
     except Exception as e:
         print(f"\nKRYTYCZNY BŁĄD: {str(e)}", file=sys.stderr)
         traceback.print_exc()  # Dodajemy ślad stosu
         sys.exit(1)
-
