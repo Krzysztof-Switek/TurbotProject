@@ -3,9 +3,9 @@ import cv2
 from typing import List, Optional, Tuple
 from dataclasses import dataclass, field
 import uuid
-from math import hypot
+import math
 from bounding_box import BoundingBox
-
+from math import hypot
 
 @dataclass
 class RowLine:
@@ -16,66 +16,82 @@ class RowLine:
     thickness: int = 2
 
     def move(self, dx: float, dy: float):
-        """Przesuwa całą linię"""
         self.p1 = (self.p1[0] + dx, self.p1[1] + dy)
-        self.p2 = (self.p2[0] + dx, self.p2[1] + dy)
-
-    def move_p1(self, dx: float, dy: float):
-        self.p1 = (self.p1[0] + dx, self.p1[1] + dy)
-
-    def move_p2(self, dx: float, dy: float):
         self.p2 = (self.p2[0] + dx, self.p2[1] + dy)
 
 
 class RowDetector:
     @dataclass
     class Row:
-        id: int  # Numer wiersza
-        line: RowLine  # Linia przypisana do tego wiersza
-        boxes: List[BoundingBox] = field(default_factory=list)  # Typowana lista bboxów
+        id: int
+        line: RowLine
+        boxes: List[BoundingBox] = field(default_factory=list)
 
-        def add_box(self, box: BoundingBox, max_distance: float = 50.0) -> bool:
-            """Dodaje box do wiersza jeśli jest blisko linii"""
-            if not self._is_box_near_line(box, max_distance):
+        def add_box(self, box: BoundingBox) -> bool:
+            """Dodaje box jeśli przecina się z linią wiersza"""
+            if not self._does_line_intersect_box(self.line, box):
                 return False
 
             if box not in self.boxes:
                 self.boxes.append(box)
-                # Automatyczne sortowanie od lewej do prawej
-                self.boxes.sort(key=lambda b: b.x1 + b.width() / 2)  # Sort po środku boxa
+                self.boxes.sort(key=lambda b: b.x1 + b.width() / 2)
             return True
 
         def remove_box(self, box: BoundingBox) -> bool:
-            """Usuwa box z wiersza"""
             try:
                 self.boxes.remove(box)
                 return True
             except ValueError:
                 return False
 
-        def _is_box_near_line(self, box: BoundingBox, max_distance: float) -> bool:
-            """Sprawdza czy box jest wystarczająco blisko linii wiersza"""
-            box_center = (box.x1 + box.width() / 2, box.y1 + box.height() / 2)
-            distance = self._distance_to_line(self.line.p1, self.line.p2, box_center)
-            return distance <= max_distance
+        def _does_line_intersect_box(self, line: RowLine, box: BoundingBox) -> bool:
+            """Sprawdza czy linia przecina box (dokładne sprawdzenie geometrii)"""
+            # Konwersja punktów do numpy array
+            line_p1 = np.array(line.p1)
+            line_p2 = np.array(line.p2)
 
-        def _distance_to_line(self, p1: Tuple[float, float],
-                              p2: Tuple[float, float],
-                              point: Tuple[float, float]) -> float:
-            """Oblicza odległość punktu od linii"""
-            x1, y1 = p1
-            x2, y2 = p2
-            x0, y0 = point
+            # Wierzchołki boxa w kolejności zgodnej z ruchem wskazówek zegara
+            box_corners = [
+                np.array([box.x1, box.y1]),  # Lewy górny
+                np.array([box.x2, box.y1]),  # Prawy górny
+                np.array([box.x2, box.y2]),  # Prawy dolny
+                np.array([box.x1, box.y2])  # Lewy dolny
+            ]
 
-            if x1 == x2:  # Linia pionowa
-                return abs(x0 - x1)
+            # Sprawdź przecięcie z każdą krawędzią boxa
+            for i in range(4):
+                a = box_corners[i]
+                b = box_corners[(i + 1) % 4]
 
-            A = y2 - y1
-            B = x1 - x2
-            C = x2 * y1 - x1 * y2
+                if self._line_segments_intersect(line_p1, line_p2, a, b):
+                    return True
 
-            return abs(A * x0 + B * y0 + C) / (A ** 2 + B ** 2) ** 0.5
+            # Sprawdź czy linia jest całkowicie wewnątrz boxa
+            return (self._point_in_box(line_p1, box) or
+                    self._point_in_box(line_p2, box))
 
+        def _line_segments_intersect(self, p1: np.ndarray, p2: np.ndarray,
+                                     q1: np.ndarray, q2: np.ndarray) -> bool:
+            """Sprawdza czy dwa odcinki się przecinają"""
+            r = p2 - p1
+            s = q2 - q1
+            qp = q1 - p1
+
+            cross_rs = np.cross(r, s)
+            if abs(cross_rs) < 1e-12:  # Linie równoległe
+                return False
+
+            t = np.cross(qp, s) / cross_rs
+            u = np.cross(qp, r) / cross_rs
+
+            return (0 <= t <= 1) and (0 <= u <= 1)
+
+        def _point_in_box(self, point: np.ndarray, box: BoundingBox) -> bool:
+            """Sprawdza czy punkt jest wewnątrz boxa"""
+            return (box.x1 <= point[0] <= box.x2 and
+                    box.y1 <= point[1] <= box.y2)
+
+    # Reszta klasy RowDetector pozostaje bez zmian (poza usunięciem nieużywanych metod)
     def __init__(self, bbox_manager):
         self.bbox_manager = bbox_manager
         self.rows: List[RowDetector.Row] = []
@@ -91,15 +107,36 @@ class RowDetector:
         self.drawing_started = True
 
     def update_line_end(self, x: int, y: int) -> None:
-        if self.current_line and self.drawing_started:
+        """Aktualizuje koniec linii tylko gdy jest aktywny proces rysowania"""
+        if self.current_line is not None:  # Wystarczy sprawdzenie current_line
             self.current_line.p2 = (float(x), float(y))
 
     def finish_line(self) -> None:
-        if self.current_line and self.drawing_started:
-            print(f"[DEBUG] Przypisywanie boxów do linii {self.current_line.id}...")
-            self._assign_boxes_to_line()
-            self.current_line = None
-            self.drawing_started = False
+        """Kończy rysowanie linii z walidacją i gwarancją spójności stanu"""
+        # Sprawdzenie spójności stanu
+        if self.current_line is None:
+            self.drawing_started = False  # Naprawa ewentualnej niespójności
+            return
+
+        # Walidacja długości linii
+        line_length = math.hypot(
+            self.current_line.p2[0] - self.current_line.p1[0],
+            self.current_line.p2[1] - self.current_line.p1[1]
+        )
+
+        if line_length < 10.0:  # Minimalna długość 10px
+            print("Odrzucono linię: zbyt krótka (minimalna długość: 10px)")
+            self._reset_drawing_state()
+            return
+
+        # Przypisanie bboxów do linii
+        self._assign_boxes_to_line()
+        self._reset_drawing_state()
+
+    def _reset_drawing_state(self) -> None:
+        """Prywatna metoda do resetowania stanu rysowania"""
+        self.current_line = None
+        self.drawing_started = False
 
     def draw_rows(self, image: np.ndarray) -> None:
         """Rysuje wszystkie linie na obrazie"""
@@ -112,7 +149,7 @@ class RowDetector:
                      (int(row.line.p2[0]), int(row.line.p2[1])),
                      row.line.color, 2)
 
-        if self.current_line and self.drawing_started:
+        if self.current_line is not None:
             cv2.line(image,
                      (int(self.current_line.p1[0]), int(self.current_line.p1[1])),
                      (int(self.current_line.p2[0]), int(self.current_line.p2[1])),
@@ -144,27 +181,10 @@ class RowDetector:
                 return row.line
         return None
 
-    def _distance_to_line(self, p1: Tuple[float, float],
-                          p2: Tuple[float, float],
-                          point: Tuple[float, float]) -> float:
-        """Oblicza odległość punktu od linii"""
-        x1, y1 = p1
-        x2, y2 = p2
-        x0, y0 = point
-
-        if x1 == x2:  # Linia pionowa
-            return abs(x0 - x1)
-
-        A = y2 - y1
-        B = x1 - x2
-        C = x2 * y1 - x1 * y2
-
-        return abs(A * x0 + B * y0 + C) / (A ** 2 + B ** 2) ** 0.5
 
     def _assign_boxes_to_line(self) -> None:
         """Przypisuje boxy do linii, tworząc nowy wiersz."""
         if not self.current_line:
-            print("[DEBUG] Brak aktualnej linii, wychodzę.")
             return
 
         new_row = self.Row(
@@ -173,11 +193,9 @@ class RowDetector:
         )
 
         for box in self.bbox_manager.boxes:
-            print(f"[DEBUG] Sprawdzam box {box}")
-            new_row.add_box(box)  # Automatyczna walidacja i sortowanie
+            new_row.add_box(box)
+
 
         if new_row.boxes:
             self.rows.append(new_row)
-            print(f"Utworzono wiersz {new_row.id} z {len(new_row.boxes)} boxami")
-        else:
-            print("Żaden box nie został przypisany do linii.")
+            print(f"W wierszu {new_row.id} przypisano {len(new_row.boxes)} boksów.")
