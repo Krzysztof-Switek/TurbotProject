@@ -27,6 +27,13 @@ class RowDetector:
         line: RowLine
         boxes: List[BoundingBox] = field(default_factory=list)
 
+        @property
+        def slope(self) -> float:
+            """Oblicza nachylenie linii wiersza (dy/dx)."""
+            dx = self.line.p2[0] - self.line.p1[0]
+            dy = self.line.p2[1] - self.line.p1[1]
+            return dy / dx if dx != 0 else float('inf')  # Unikamy dzielenia przez zero
+
         def add_box(self, box: BoundingBox) -> bool:
             """Dodaje box jeśli przecina się z linią wiersza"""
             if not self._does_line_intersect_box(self.line, box):

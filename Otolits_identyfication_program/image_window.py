@@ -142,32 +142,7 @@ class ImageWindow:
             print("To już ostatnie zdjęcie.")
 
     def _handle_crop_boxes(self):
-        """Obsługa wycinania boxów"""
-        try:
-            if not hasattr(self, 'image_cropper'):
-                print("ImageCropper nie został poprawnie zainicjalizowany")
-                return
+        """Przekazuje żądanie wycięcia boxów do ImageCropper"""
+        self.image_cropper.process_cropping(self.bbox_manager, self.input_handler)
 
-            original_image = self.image_loader.get_original_image()
-            if original_image is None:
-                print("Nie można załadować oryginalnego obrazu")
-                return
-
-            print("Rozpoczynanie procesu wycinania boxów...")
-            results = self.image_cropper.crop_and_save(
-                original_image,
-                self.input_handler.row_detector.rows if hasattr(self.input_handler, 'row_detector') else [],
-                self.bbox_manager.boxes
-            )
-
-            if results:
-                print(f"\nPomyślnie wycięto i zapisano {len(results)} boxów:")
-                for result in results:
-                    print(f"- {result.filename}")
-                print(f"Pliki zapisano w: {os.path.abspath(self.image_cropper.output_dir)}\n")
-            else:
-                print("Nie udało się wyciąć żadnych boxów")
-
-        except Exception as e:
-            print(f"Błąd podczas wycinania boxów: {str(e)}")
 

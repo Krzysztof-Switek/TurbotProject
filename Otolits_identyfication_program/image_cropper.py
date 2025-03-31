@@ -8,6 +8,7 @@ if TYPE_CHECKING:
     from image_loader import ImageLoader
     from row_detector import RowLine
     from bounding_box_manager import BoundingBox
+    from input_handler import InputHandler
 
 @dataclass
 class CropResult:
@@ -24,9 +25,9 @@ class ImageCropper:
         os.makedirs(output_dir, exist_ok=True)
 
     def crop_and_save(self,
-                     original_image: np.ndarray,
-                     rows: List['RowLine'],
-                     boxes: List['BoundingBox']) -> List[CropResult]:
+                      original_image: np.ndarray,
+                      rows: List['RowLine'],
+                      boxes: List['BoundingBox']) -> List[CropResult]:
 
         if original_image is None:
             print("Brak obrazu do wycięcia")
@@ -78,3 +79,32 @@ class ImageCropper:
 
         return results
 
+    def process_cropping(self, bbox_manager: 'BoundingBoxManager', input_handler: 'InputHandler'):
+        """ Obsługuje wycinanie boxów i zapisuje je na dysk """
+        try:
+            if not self.image_loader:
+                print("ImageLoader nie został poprawnie zainicjalizowany")
+                return
+
+            original_image = self.image_loader.get_original_image()
+            if original_image is None:
+                print("Nie można załadować oryginalnego obrazu")
+                return
+
+            print("Rozpoczynanie procesu wycinania boxów...")
+            results = self.crop_and_save(
+                original_image,
+                input_handler.row_detector.rows if hasattr(input_handler, 'row_detector') else [],
+                bbox_manager.boxes
+            )
+
+            if results:
+                print(f"\nPomyślnie wycięto i zapisano {len(results)} boxów:")
+                for result in results:
+                    print(f"- {result.filename}")
+                print(f"Pliki zapisano w: {os.path.abspath(self.output_dir)}\n")
+            else:
+                print("Nie udało się wyciąć żadnych boxów")
+
+        except Exception as e:
+            print(f"Image_cropper - Błąd podczas wycinania boxów: {str(e)}")

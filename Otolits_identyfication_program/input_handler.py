@@ -58,7 +58,7 @@ class InputHandler:
                 ManualMode.ADD_LINE: "Dodawanie linii",
                 ManualMode.DELETE: "Usuwanie",
                 ManualMode.MOVE: "Przesuwanie",
-                ManualMode.RESIZE: "Zmiana rozmiaru"  # Dodajemy nowy tryb
+                ManualMode.RESIZE: "Zmiana rozmiaru"
             }
             mode_info += f" | {mode_names[self.manual_mode]}"
 
@@ -176,7 +176,7 @@ class InputHandler:
         elif self.manual_mode == ManualMode.ADD_LINE:
             self.row_detector.finish_line()  # <---- Zakończenie rysowania linii
             self.row_detector._assign_boxes_to_line()  # <---- Automatyczne przypisanie boxów do linii
-            print("Przypisano boxy do linii!")  # <---- Debugging
+
 
         self._reset_selection()
         return True
