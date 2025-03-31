@@ -6,6 +6,7 @@ from row_detector import RowLine
 from bounding_box import BoundingBox
 from math import hypot
 
+
 class WorkMode(Enum):
     AUTO = auto()  # Tryb automatyczny (domyślny)
     MANUAL = auto()  # Tryb manualny
@@ -173,7 +174,9 @@ class InputHandler:
                 self.bbox_manager.add_box(final_box)
 
         elif self.manual_mode == ManualMode.ADD_LINE:
-            self.row_detector.finish_line()
+            self.row_detector.finish_line()  # <---- Zakończenie rysowania linii
+            self.row_detector._assign_boxes_to_line()  # <---- Automatyczne przypisanie boxów do linii
+            print("Przypisano boxy do linii!")  # <---- Debugging
 
         self._reset_selection()
         return True
