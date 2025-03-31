@@ -100,13 +100,9 @@ class InputHandler:
         elif self.manual_mode == ManualMode.MOVE:
             if box := self.bbox_manager.get_box_at(x, y):
                 self.selection.element = box
-                print(f"Zaznaczono box: {box}")  # 🔍 Debug
             elif line := self.row_detector.get_line_at(x, y):
-                print(f"Sprawdzam linię na ({x}, {y}): {line}")  # 🔍 Debug
                 if isinstance(line, RowLine):
-                    print(f"✅ Zaznaczono linię: {self.selection.element}")  # 🔍 Debug
                     self.selection.element = line
-                else: print("Nieprawidłowy typ obiektu!")  # 🔍 Debug
         elif self.manual_mode == ManualMode.RESIZE:  # Nowy tryb
             if box := self.bbox_manager.get_box_at(x, y):
                 self.selection.element = box
@@ -122,30 +118,23 @@ class InputHandler:
         return True
 
     def _handle_mouse_move(self, x: int, y: int) -> bool:
-        print(f"_handle_mouse_move: przed sprawdzeniem selection.element = {self.selection.element}")  # 🔍 Debug
 
         if not self.selection.is_drawing:
             return False
 
         if self.manual_mode == ManualMode.ADD_LINE:
-            print("_handle_mouse_move: aktualizowanie końca linii")  # 🔍 Debug
             self.row_detector.update_line_end(x, y)
             return True
 
         if not self.selection.element:
-            print("_handle_mouse_move: brak zaznaczonego elementu!")  # 🔍 Debug
             return False
 
         dx, dy = x - self.selection.drag_start[0], y - self.selection.drag_start[1]
-        print(f"_handle_mouse_move: przesuwanie dx={dx}, dy={dy}")  # 🔍 Debug
         self.selection.drag_start = (x, y)
 
         if self.manual_mode == ManualMode.MOVE:
             if isinstance(self.selection.element, RowLine):
-                print(
-                    f"Przesunięcie linii: dx={dx}, dy={dy}, przed: {self.selection.element.p1}, {self.selection.element.p2}")
                 self.selection.element.move(dx, dy)
-                print(f"Po przesunięciu: {self.selection.element.p1}, {self.selection.element.p2}")
 
             elif isinstance(self.selection.element, BoundingBox):
                 self.selection.element.move(dx, dy)
