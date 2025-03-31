@@ -1,9 +1,10 @@
 from enum import Enum, auto
 import cv2
-from typing import Optional, Tuple
+from typing import Optional, Tuple, Union
 from dataclasses import dataclass
+from row_detector import RowLine
 from bounding_box import BoundingBox
-
+from math import hypot
 
 class WorkMode(Enum):
     AUTO = auto()  # Tryb automatyczny (domyślny)
@@ -15,6 +16,7 @@ class ManualMode(Enum):
     ADD_LINE = auto()  # Dodawanie linii
     DELETE = auto()  # Usuwanie elementów
     MOVE = auto()  # Przesuwanie elementów
+    RESIZE = auto()  # Zmiana rozmiaru
 
 
 @dataclass
@@ -22,7 +24,7 @@ class SelectionContext:
     element: Optional[object] = None
     drag_start: Optional[Tuple[int, int]] = None
     is_drawing: bool = False
-    corner_idx: Optional[int] = None
+    corner_idx: Optional[Union[int, str]] = None  # Dla boxów: 0-3, dla linii: 'p1'/'p2'
 
 
 class InputHandler:
@@ -41,6 +43,7 @@ class InputHandler:
             ord('l'): lambda: self._set_manual_mode(ManualMode.ADD_LINE),
             ord('d'): lambda: self._set_manual_mode(ManualMode.DELETE),
             ord('v'): lambda: self._set_manual_mode(ManualMode.MOVE),
+            ord('r'): lambda: self._set_manual_mode(ManualMode.RESIZE),
             27: self._reset_selection  # ESC
         }
 
@@ -53,7 +56,8 @@ class InputHandler:
                 ManualMode.ADD_BOX: "Dodawanie boxów",
                 ManualMode.ADD_LINE: "Dodawanie linii",
                 ManualMode.DELETE: "Usuwanie",
-                ManualMode.MOVE: "Przesuwanie"
+                ManualMode.MOVE: "Przesuwanie",
+                ManualMode.RESIZE: "Zmiana rozmiaru"  # Dodajemy nowy tryb
             }
             mode_info += f" | {mode_names[self.manual_mode]}"
 
@@ -80,7 +84,6 @@ class InputHandler:
         return handlers.get(event, lambda *_: False)(x, y)
 
     def _handle_left_down(self, x: int, y: int) -> bool:
-        """Obsługa wciśnięcia LPM"""
         self.selection.is_drawing = True
 
         if self.manual_mode == ManualMode.ADD_BOX:
@@ -88,7 +91,6 @@ class InputHandler:
         elif self.manual_mode == ManualMode.ADD_LINE:
             self.row_detector.start_new_line(x, y)
         elif self.manual_mode == ManualMode.DELETE:
-            # Najpierw sprawdzamy boxy, potem linie
             if box := self.bbox_manager.get_box_at(x, y):
                 self.bbox_manager.remove_box(box)
                 return True
@@ -98,33 +100,64 @@ class InputHandler:
         elif self.manual_mode == ManualMode.MOVE:
             if box := self.bbox_manager.get_box_at(x, y):
                 self.selection.element = box
+                print(f"Zaznaczono box: {box}")  # 🔍 Debug
             elif line := self.row_detector.get_line_at(x, y):
+                print(f"Sprawdzam linię na ({x}, {y}): {line}")  # 🔍 Debug
+                if isinstance(line, RowLine):
+                    print(f"✅ Zaznaczono linię: {self.selection.element}")  # 🔍 Debug
+                    self.selection.element = line
+                else: print("Nieprawidłowy typ obiektu!")  # 🔍 Debug
+        elif self.manual_mode == ManualMode.RESIZE:  # Nowy tryb
+            if box := self.bbox_manager.get_box_at(x, y):
+                self.selection.element = box
+                self.selection.corner_idx = box.get_nearest_corner(x, y)
+            elif line := self.row_detector.get_line_at(x, y):
+                # Sprawdź który koniec linii jest bliżej
+                dist_p1 = hypot(x - line.p1[0], y - line.p1[1])
+                dist_p2 = hypot(x - line.p2[0], y - line.p2[1])
                 self.selection.element = line
+                self.selection.corner_idx = 'p1' if dist_p1 < dist_p2 else 'p2'
 
         self.selection.drag_start = (x, y)
         return True
 
     def _handle_mouse_move(self, x: int, y: int) -> bool:
-        """Obsługa ruchu myszą"""
+        print(f"_handle_mouse_move: przed sprawdzeniem selection.element = {self.selection.element}")  # 🔍 Debug
+
         if not self.selection.is_drawing:
             return False
 
         if self.manual_mode == ManualMode.ADD_LINE:
+            print("_handle_mouse_move: aktualizowanie końca linii")  # 🔍 Debug
             self.row_detector.update_line_end(x, y)
             return True
 
         if not self.selection.element:
+            print("_handle_mouse_move: brak zaznaczonego elementu!")  # 🔍 Debug
             return False
 
         dx, dy = x - self.selection.drag_start[0], y - self.selection.drag_start[1]
+        print(f"_handle_mouse_move: przesuwanie dx={dx}, dy={dy}")  # 🔍 Debug
         self.selection.drag_start = (x, y)
 
-        if self.manual_mode == ManualMode.ADD_BOX:
-            self.selection.element.x2 = x
-            self.selection.element.y2 = y
-        elif self.manual_mode == ManualMode.MOVE:
-            if hasattr(self.selection.element, 'move'):
+        if self.manual_mode == ManualMode.MOVE:
+            if isinstance(self.selection.element, RowLine):
+                print(
+                    f"Przesunięcie linii: dx={dx}, dy={dy}, przed: {self.selection.element.p1}, {self.selection.element.p2}")
                 self.selection.element.move(dx, dy)
+                print(f"Po przesunięciu: {self.selection.element.p1}, {self.selection.element.p2}")
+
+            elif isinstance(self.selection.element, BoundingBox):
+                self.selection.element.move(dx, dy)
+
+        elif self.manual_mode == ManualMode.RESIZE:
+            if isinstance(self.selection.element, RowLine):
+                if self.selection.corner_idx == 'p1':
+                    self.selection.element.p1 = (float(x), float(y))
+                elif self.selection.corner_idx == 'p2':
+                    self.selection.element.p2 = (float(x), float(y))
+            elif isinstance(self.selection.element, BoundingBox):
+                self.selection.element.resize_corner(self.selection.corner_idx, x, y)
 
         return True
 
@@ -136,14 +169,20 @@ class InputHandler:
         self.selection.is_drawing = False
 
         if self.manual_mode == ManualMode.ADD_BOX and self.selection.element:
-            final_box = BoundingBox(
-                min(self.selection.element.x1, x),
-                min(self.selection.element.y1, y),
-                max(self.selection.element.x1, x),
-                max(self.selection.element.y1, y),
-                is_temp=False
-            )
-            self.bbox_manager.add_box(final_box)
+            x1, y1 = self.selection.element.x1, self.selection.element.y1
+            x2, y2 = x, y
+
+            # Tylko jeśli box ma dodatnią powierzchnię
+            if x1 != x2 and y1 != y2:
+                final_box = BoundingBox(
+                    min(x1, x2),
+                    min(y1, y2),
+                    max(x1, x2),
+                    max(y1, y2),
+                    is_temp=False
+                )
+                self.bbox_manager.add_box(final_box)
+
         elif self.manual_mode == ManualMode.ADD_LINE:
             self.row_detector.finish_line()
 

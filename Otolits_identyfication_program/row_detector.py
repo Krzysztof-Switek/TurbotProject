@@ -5,6 +5,7 @@ from dataclasses import dataclass
 import uuid
 from math import hypot
 
+
 @dataclass
 class RowLine:
     p1: Tuple[float, float]
@@ -14,7 +15,14 @@ class RowLine:
     thickness: int = 2
 
     def move(self, dx: float, dy: float):
+        """Przesuwa całą linię"""
         self.p1 = (self.p1[0] + dx, self.p1[1] + dy)
+        self.p2 = (self.p2[0] + dx, self.p2[1] + dy)
+
+    def move_p1(self, dx: float, dy: float):
+        self.p1 = (self.p1[0] + dx, self.p1[1] + dy)
+
+    def move_p2(self, dx: float, dy: float):
         self.p2 = (self.p2[0] + dx, self.p2[1] + dy)
 
 class RowDetector:
@@ -60,6 +68,7 @@ class RowDetector:
                      (int(self.current_line.p1[0]), int(self.current_line.p1[1])),
                      (int(self.current_line.p2[0]), int(self.current_line.p2[1])),
                      self.current_line.color, 2, cv2.LINE_AA)  # Używamy current_line zamiast row
+
 
     def clear_rows(self) -> None:
         """Czyści wszystkie linie"""

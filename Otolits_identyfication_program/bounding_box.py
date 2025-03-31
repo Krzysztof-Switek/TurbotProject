@@ -24,8 +24,6 @@ class BoundingBox:
 
     def _validate_coordinates(self) -> None:
         """Walidacja współrzędnych boxa"""
-        if self.x1 == self.x2 or self.y1 == self.y2:
-            raise ValueError("Bounding box nie może mieć zerowej szerokości/wysokości")
         if any(coord < 0 for coord in [self.x1, self.y1, self.x2, self.y2]):
             raise ValueError("Współrzędne nie mogą być ujemne")
 
