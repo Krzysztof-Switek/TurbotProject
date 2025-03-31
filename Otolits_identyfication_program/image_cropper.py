@@ -10,6 +10,7 @@ if TYPE_CHECKING:
     from bounding_box_manager import BoundingBox
     from input_handler import InputHandler
 
+
 @dataclass
 class CropResult:
     image: np.ndarray
@@ -18,39 +19,46 @@ class CropResult:
     original_coords: Tuple[int, int, int, int]
     filename: str
 
+
 class ImageCropper:
     def __init__(self, output_dir: str = "output_crops", image_loader: 'ImageLoader' = None):
         self.output_dir = output_dir
         self.image_loader = image_loader
         os.makedirs(output_dir, exist_ok=True)
 
-    def crop_and_save(self,
-                      original_image: np.ndarray,
-                      rows: List['RowLine'],
-                      boxes: List['BoundingBox']) -> List[CropResult]:
-
+    def crop_and_save(self, original_image: np.ndarray, rows: List['RowLine'], boxes: List['BoundingBox']) -> List[
+        CropResult]:
         if original_image is None:
             print("Brak obrazu do wycięcia")
             return []
 
         results = []
 
-        # Sortowanie wierszy od góry do dołu
-        sorted_rows = sorted(rows,
-                             key=lambda row: row.intercept if abs(row.slope) < 0.01 else min(b.y1 for b in row.boxes))
+        original_path = self.image_loader.current_image_path if self.image_loader else None
+        original_filename = os.path.splitext(os.path.basename(original_path))[0] if original_path else "image"
 
-        for row_idx, row in enumerate(sorted_rows):
-            # Sortowanie boxów w wierszu od lewej do prawej
+        # Sort rows from top to bottom
+        sorted_rows = sorted(rows, key=lambda row: min(b.y1 for b in row.boxes))
+
+        for absolute_row_idx, row in enumerate(sorted_rows, start=1):
+            # Determine prefix and row number for filename
+            if absolute_row_idx <= 3:  # Wiersze 1-3
+                prefix = f"A_{absolute_row_idx}"
+                display_row_num = absolute_row_idx
+            else:  # Wiersze 4-6
+                prefix = f"B_{absolute_row_idx - 3}"  # 4→1, 5→2, 6→3
+                display_row_num = absolute_row_idx - 3
+
+            # Sort boxes left to right
             sorted_boxes = sorted(row.boxes, key=lambda b: (b.x1 + b.x2) / 2)
 
-            for box_idx, box in enumerate(sorted_boxes):
-                # Przelicz współrzędne boxa na oryginalną rozdzielczość
+            for box_idx, box in enumerate(sorted_boxes, start=1):
+                # Original cropping logic remains unchanged
                 if self.image_loader:
                     x1, y1, x2, y2 = self.image_loader.scale_coords_to_original(box.x1, box.y1, box.x2, box.y2)
                 else:
                     x1, y1, x2, y2 = box.x1, box.y1, box.x2, box.y2
 
-                # Zabezpieczenie przed przekroczeniem wymiarów
                 h, w = original_image.shape[:2]
                 x1, x2 = sorted([max(0, min(w, x1)), max(0, min(w, x2))])
                 y1, y2 = sorted([max(0, min(h, y1)), max(0, min(h, y2))])
@@ -63,14 +71,15 @@ class ImageCropper:
                     if cropped.size == 0:
                         continue
 
-                    filename = f"row_{row_idx:02d}_box_{box_idx:02d}.png"
+                    # New filename format
+                    filename = f"{original_filename}{prefix}_{box_idx}.png"
                     filepath = os.path.join(self.output_dir, filename)
                     cv2.imwrite(filepath, cropped)
 
                     results.append(CropResult(
                         image=cropped,
                         box_index=box_idx,
-                        row_index=row_idx,
+                        row_index=absolute_row_idx,  # Absolute position preserved
                         original_coords=(x1, y1, x2, y2),
                         filename=filename
                     ))
@@ -80,7 +89,7 @@ class ImageCropper:
         return results
 
     def process_cropping(self, bbox_manager: 'BoundingBoxManager', input_handler: 'InputHandler'):
-        """ Obsługuje wycinanie boxów i zapisuje je na dysk """
+        """ Handles cropping boxes and saving them to disk """
         try:
             if not self.image_loader:
                 print("ImageLoader nie został poprawnie zainicjalizowany")
