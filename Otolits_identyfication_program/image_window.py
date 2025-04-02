@@ -1,61 +1,40 @@
 import cv2
-import os
-import sys
-import time
 import gc
-from Otolits_identyfication_program.input_handler import WorkMode, ManualMode
 from row_detector import RowDetector
 from image_cropper import ImageCropper
 
 
 class ImageWindow:
-    def __init__(self, image_loader, bbox_manager, input_handler):
+    def __init__(self, image_loader, bbox_manager, input_handler, auto_detector=None):
         self.image_loader = image_loader
         self.bbox_manager = bbox_manager
         self.input_handler = input_handler
+        self.auto_detector = auto_detector
 
-        # Inicjalizacja RowDetector i przypisanie do input_handler
-        row_detector = RowDetector(bbox_manager)
-        self.input_handler.row_detector = row_detector
-
+        # Inicjalizacja komponentów
         self.current_image = None
         self.window_name = "Otolith Annotation Tool"
         self.image_cropper = ImageCropper(image_loader=image_loader)
 
-        # Optymalizacja - cache renderowania
-        self.last_rendered_image = None
-        self.dirty = True  # Flaga wskazująca potrzebę ponownego renderowania
+        # Inicjalizacja RowDetector
+        self.input_handler.row_detector = RowDetector(bbox_manager)
 
-        # Inicjalizacja struktur do zarządzania zasobami
+        # Flagi stanu
+        self.dirty = True
         self._cached_images = []
 
-    def _release_resources(self):
-        """Bezpieczne zwalnianie zasobów graficznych"""
-        # Zwolnienie cache'owanych obrazów
-        for img in self._cached_images:
-            if img is not None:
-                img = None
-        self._cached_images.clear()
-
-        # Zwolnienie ostatnio renderowanego obrazu
-        if self.last_rendered_image is not None:
-            self.last_rendered_image = None
-
-        # Wymuszenie garbage collection
-        gc.collect()
-
+    # Podstawowe metody zarządzania obrazem
     def _prepare_display_image(self):
-        """Przygotowanie obrazu do wyświetlenia z zarządzaniem pamięcią"""
+        """Konwersja obrazu do formatu BGR z zarządzaniem pamięcią"""
         if self.current_image is None:
             return None
 
-        # Zwolnienie starych zasobów przed tworzeniem nowych
-        if len(self._cached_images) > 5:  # Utrzymujemy rozsądny limit cache
+        if len(self._cached_images) > 5:
             self._release_resources()
 
-        if len(self.current_image.shape) == 2:  # Grayscale
+        if len(self.current_image.shape) == 2:
             converted = cv2.cvtColor(self.current_image.copy(), cv2.COLOR_GRAY2BGR)
-        elif self.current_image.shape[2] == 4:  # RGBA
+        elif self.current_image.shape[2] == 4:
             converted = cv2.cvtColor(self.current_image.copy(), cv2.COLOR_BGRA2BGR)
         else:
             converted = self.current_image.copy()
@@ -63,136 +42,97 @@ class ImageWindow:
         self._cached_images.append(converted)
         return converted
 
-    def _draw_mode_info(self, image):
-        """Rysuje informację o trybie na obrazie"""
-        if image is None:
-            return
+    def _release_resources(self):
+        """Czyszczenie zasobów graficznych"""
+        for img in self._cached_images:
+            img = None
+        self._cached_images.clear()
+        gc.collect()
 
-        mode_text = f"Tryb: {self.input_handler.work_mode.name}"
-        if self.input_handler.work_mode.name == "MANUAL":
-            mode_text += f" | Manual: {self.input_handler.manual_mode.name}"
-
-        (text_width, text_height), _ = cv2.getTextSize(
-            mode_text, cv2.FONT_HERSHEY_SIMPLEX, 0.7, 2)
-
-        cv2.rectangle(image,
-                      (10, 10),
-                      (20 + text_width, 20 + text_height),
-                      (0, 0, 0), -1)
-
-        cv2.putText(image, mode_text,
-                    (20, 20 + text_height),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    0.7,
-                    (255, 255, 255),
-                    2,
-                    cv2.LINE_AA)
-
-    def mark_dirty(self):
-        """Oznacza, że obraz wymaga ponownego renderowania"""
-        self.dirty = True
-
+    # Renderowanie
     def update_display(self):
-        """Renderuje tylko gdy jest to konieczne"""
-        if not self.dirty and self.last_rendered_image is not None:
-            cv2.imshow(self.window_name, self.last_rendered_image)
+        """Główna metoda renderująca obraz i adnotacje"""
+        if not self.dirty:
             return
 
         display_image = self._prepare_display_image()
         if display_image is None:
             return
 
-        # 1. Najpierw rysujemy tymczasowy box (jeśli istnieje)
-        if hasattr(self.input_handler, 'temp_box') and self.input_handler.temp_box:
-            self.input_handler.temp_box.draw(display_image, thickness=1)
-
-        # 2. Potem rysujemy wszystkie stałe boxy
+        # Rysowanie boxów (automatyczne i ręczne)
         for box in self.bbox_manager.boxes:
-            box.draw(display_image)
+            color = (0, 255, 0) if getattr(box, 'label', None) == "auto" else (0, 0, 255)
+            box.draw(display_image, color=color)
 
-        # 3. Rysujemy linie wierszy
+        # Rysowanie tymczasowych elementów
+        if hasattr(self.input_handler, 'temp_box') and self.input_handler.temp_box:
+            self.input_handler.temp_box.draw(display_image)
+
         if hasattr(self.input_handler, 'row_detector'):
             self.input_handler.row_detector.draw_rows(display_image)
 
-        # 4. Rysujemy informację o trybie
-        self._draw_mode_info(display_image)
-
-        # Cache'owanie wyrenderowanego obrazu
-        if self.last_rendered_image is not None:
-            self.last_rendered_image = None
-        self.last_rendered_image = display_image.copy()
         cv2.imshow(self.window_name, display_image)
         self.dirty = False
 
+    # Główna pętla
     def show_image(self):
-        """Główna pętla wyświetlania obrazu"""
+        """Główna pętla interfejsu użytkownika"""
         try:
             self.current_image = self.image_loader.load_image()
             if self.current_image is None:
-                print("Brak zdjęć do wyświetlenia.")
+                print("Brak obrazów do wyświetlenia")
                 return
 
             cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
             cv2.setMouseCallback(self.window_name, self._handle_mouse_event)
-            self.mark_dirty()
-            self.update_display()
 
             while True:
-                key = cv2.waitKey(1) & 0xFF
+                self.mark_dirty()
+                self.update_display()
 
-                if (key == ord('q') or
-                        cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) < 1):
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q') or cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) < 1:
                     break
 
                 if key == 13:  # Enter
                     self._handle_crop_boxes()
-                    continue
 
                 if key == ord('n'):
                     self._handle_next_image()
-                    continue
 
                 if self.input_handler.keyboard_callback(key):
                     self.mark_dirty()
-                    self.update_display()
+
         finally:
             self._cleanup()
 
-    def _cleanup(self):
-        """Bezpieczne zwolnienie wszystkich zasobów"""
-        self._release_resources()
-        cv2.destroyAllWindows()
-        if hasattr(self, 'input_handler') and hasattr(self.input_handler, 'row_detector'):
-            self.input_handler.row_detector.clear_rows()
-        self.bbox_manager.clear_all()
+    # Pomocnicze metody
+    def mark_dirty(self):
+        self.dirty = True
 
     def _handle_mouse_event(self, event, x, y, flags, param):
-        """Obsługa zdarzeń myszy"""
         try:
-            x, y = int(x), int(y)
+            if self.input_handler.mouse_callback(event, int(x), int(y)):
+                self.mark_dirty()
         except (ValueError, TypeError):
-            print(f"Nieprawidłowe współrzędne myszy: x={x}, y={y}")
-            return
-
-        if self.input_handler.mouse_callback(event, x, y):
-            self.mark_dirty()
-            self.update_display()
+            print(f"Błędne współrzędne myszy: {x}, {y}")
 
     def _handle_next_image(self):
-        """Obsługa przejścia do następnego obrazu z czyszczeniem zasobów"""
-        self._release_resources()  # Czyszczenie przed zmianą obrazu
-
+        self._release_resources()
         next_image = self.image_loader.next_image()
-        if next_image is not None:
+        if next_image:
             self.current_image = next_image
             self.bbox_manager.clear_all()
             if hasattr(self.input_handler, 'row_detector'):
                 self.input_handler.row_detector.clear_rows()
             self.mark_dirty()
-            self.update_display()
-        else:
-            print("To już ostatnie zdjęcie.")
 
     def _handle_crop_boxes(self):
-        """Przekazuje żądanie wycięcia boxów do ImageCropper"""
         self.image_cropper.process_cropping(self.bbox_manager, self.input_handler)
+
+    def _cleanup(self):
+        self._release_resources()
+        cv2.destroyAllWindows()
+        if hasattr(self.input_handler, 'row_detector'):
+            self.input_handler.row_detector.clear_rows()
+        self.bbox_manager.clear_all()
