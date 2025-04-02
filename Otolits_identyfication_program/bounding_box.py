@@ -21,6 +21,7 @@ class BoundingBox:
         self.id = str(uuid.uuid4())
         self.color = (0, 255, 0)
         self.selected = False
+        self._cached_corners = None  # Cache dla get_corners()
 
     def _validate_coordinates(self) -> None:
         """Walidacja współrzędnych boxa"""
@@ -34,6 +35,7 @@ class BoundingBox:
         self.x2 += dx
         self.y1 += dy
         self.y2 += dy
+        self._invalidate_cache()
 
     def resize_corner(self, corner_idx: int, x: float, y: float) -> None:
         """
@@ -51,12 +53,17 @@ class BoundingBox:
         if 0 <= corner_idx < 4:
             corners[corner_idx][1](x, y)
             self._normalize_coords()
+            self._invalidate_cache()
 
     def _normalize_coords(self) -> None:
         """Upewnia się że x1 < x2 i y1 < y2"""
         self.x1, self.x2 = sorted([self.x1, self.x2])
         self.y1, self.y2 = sorted([self.y1, self.y2])
         self._validate_coordinates()
+
+    def _invalidate_cache(self):
+        """Unieważnia cache po zmianie współrzędnych"""
+        self._cached_corners = None
 
     # ----- Operacje geometrzyczne -----
     def contains(self, x: float, y: float, tolerance: float = 0) -> bool:
@@ -82,14 +89,15 @@ class BoundingBox:
         return (self.x1 + self.x2) / 2, (self.y1 + self.y2) / 2
 
     def get_corners(self) -> List[Tuple[float, float]]:
-        """Zwraca współrzędne wszystkich rogów w kolejności:
-        0-lewy górny, 1-prawy górny, 2-lewy dolny, 3-prawy dolny"""
-        return [
-            (self.x1, self.y1),
-            (self.x2, self.y1),
-            (self.x1, self.y2),
-            (self.x2, self.y2)
-        ]
+        """Zwraca współrzędne wszystkich rogów z cache'owaniem"""
+        if self._cached_corners is None:
+            self._cached_corners = [
+                (self.x1, self.y1),
+                (self.x2, self.y1),
+                (self.x1, self.y2),
+                (self.x2, self.y2)
+            ]
+        return self._cached_corners
 
     def get_nearest_corner(self, x: float, y: float) -> int:
         """Zwraca indeks najbliższego narożnika (0-3)"""
@@ -154,3 +162,6 @@ class BoundingBox:
         """Tworzy dokładną kopię boxa"""
         return BoundingBox(self.x1, self.y1, self.x2, self.y2, self.label)
 
+    def release(self):
+        """Zwolnienie zasobów (do użycia w BoundingBoxManager.clear_all())"""
+        self._cached_corners = None
