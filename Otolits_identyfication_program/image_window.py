@@ -1,6 +1,7 @@
 import cv2
 import os
 import sys
+import time
 from Otolits_identyfication_program.input_handler import WorkMode, ManualMode
 from row_detector import RowDetector
 from image_cropper import ImageCropper
@@ -14,12 +15,15 @@ class ImageWindow:
 
         # Inicjalizacja RowDetector i przypisanie do input_handler
         row_detector = RowDetector(bbox_manager)
-        self.input_handler.row_detector = row_detector  # Teraz row_detector jest zdefiniowany
+        self.input_handler.row_detector = row_detector
 
         self.current_image = None
-        self.temp_image = None
         self.window_name = "Otolith Annotation Tool"
         self.image_cropper = ImageCropper(image_loader=image_loader)
+
+        # Optymalizacja - cache renderowania
+        self.last_rendered_image = None
+        self.dirty = True  # Flaga wskazująca potrzebę ponownego renderowania
 
     def _prepare_display_image(self):
         """Przygotowanie obrazu do wyświetlenia"""
@@ -57,7 +61,16 @@ class ImageWindow:
                     2,
                     cv2.LINE_AA)
 
+    def mark_dirty(self):
+        """Oznacza, że obraz wymaga ponownego renderowania"""
+        self.dirty = True
+
     def update_display(self):
+        """Renderuje tylko gdy jest to konieczne"""
+        if not self.dirty and self.last_rendered_image is not None:
+            cv2.imshow(self.window_name, self.last_rendered_image)
+            return
+
         display_image = self._prepare_display_image()
         if display_image is None:
             return
@@ -82,7 +95,11 @@ class ImageWindow:
             self.input_handler.row_detector.draw_rows(display_image)
 
         self._draw_mode_info(display_image)
+
+        # Cache'owanie wyrenderowanego obrazu
+        self.last_rendered_image = display_image.copy()
         cv2.imshow(self.window_name, display_image)
+        self.dirty = False
 
     def show_image(self):
         """Główna pętla wyświetlania obrazu"""
@@ -93,6 +110,7 @@ class ImageWindow:
 
         cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
         cv2.setMouseCallback(self.window_name, self._handle_mouse_event)
+        self.mark_dirty()  # Wymuś pierwsze renderowanie
         self.update_display()
 
         while True:
@@ -111,8 +129,8 @@ class ImageWindow:
                 continue
 
             if self.input_handler.keyboard_callback(key):
+                self.mark_dirty()
                 self.update_display()
-                cv2.waitKey(1)
 
         cv2.destroyAllWindows()
         sys.exit()
@@ -126,8 +144,8 @@ class ImageWindow:
             return
 
         if self.input_handler.mouse_callback(event, x, y):
-            self.update_display()  # Ważne - odświeżanie po każdym zdarzeniu
-            cv2.waitKey(1)  # Dodatkowe odświeżenie
+            self.mark_dirty()
+            self.update_display()
 
     def _handle_next_image(self):
         """Obsługa przejścia do następnego obrazu"""
@@ -137,6 +155,7 @@ class ImageWindow:
             self.bbox_manager.clear_all()
             if hasattr(self.input_handler, 'row_detector'):
                 self.input_handler.row_detector.clear_rows()
+            self.mark_dirty()
             self.update_display()
         else:
             print("To już ostatnie zdjęcie.")
@@ -144,5 +163,3 @@ class ImageWindow:
     def _handle_crop_boxes(self):
         """Przekazuje żądanie wycięcia boxów do ImageCropper"""
         self.image_cropper.process_cropping(self.bbox_manager, self.input_handler)
-
-
