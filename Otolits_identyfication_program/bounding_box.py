@@ -19,7 +19,7 @@ class BoundingBox:
 
         self.label = label
         self.id = str(uuid.uuid4())
-        self.color = (0, 255, 0)
+        self.color = (0, 0, 255)
         self.selected = False
         self._cached_corners = None  # Cache dla get_corners()
 

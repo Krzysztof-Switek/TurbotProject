@@ -227,6 +227,7 @@ class RowDetector:
             # Krok 3: Dokładne sprawdzenie przecięcia
             if new_row._does_line_intersect_box(self.current_line, box):
                 new_row.boxes.append(box)
+                box.color = (0, 255, 0)  # JEDYNA ZMIANA - zmiana koloru na zielony
                 print(f"Przypisano box {box.id} do wiersza {new_row.id}")
 
         # Posortuj boxy w wierszu
