@@ -14,7 +14,7 @@ class RowLine:
     p2: Tuple[float, float]
     id: str
     color: Tuple[int, int, int] = (0, 255, 255)  # Żółty
-    thickness: int = 2
+    thickness: int = 1
 
     def move(self, dx: float, dy: float):
         self.p1 = (self.p1[0] + dx, self.p1[1] + dy)
@@ -151,7 +151,7 @@ class RowDetector:
             cv2.line(image,
                      (int(row.line.p1[0]), int(row.line.p1[1])),
                      (int(row.line.p2[0]), int(row.line.p2[1])),
-                     row.line.color, 2)
+                     row.line.color, 1)
 
         if self.current_line is not None:
             cv2.line(image,
