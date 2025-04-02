@@ -7,6 +7,7 @@ import math
 from bounding_box import BoundingBox
 from math import hypot
 
+
 @dataclass
 class RowLine:
     p1: Tuple[float, float]
@@ -98,7 +99,6 @@ class RowDetector:
             return (box.x1 <= point[0] <= box.x2 and
                     box.y1 <= point[1] <= box.y2)
 
-    # Reszta klasy RowDetector pozostaje bez zmian (poza usunięciem nieużywanych metod)
     def __init__(self, bbox_manager):
         self.bbox_manager = bbox_manager
         self.rows: List[RowDetector.Row] = []
@@ -115,28 +115,25 @@ class RowDetector:
 
     def update_line_end(self, x: int, y: int) -> None:
         """Aktualizuje koniec linii tylko gdy jest aktywny proces rysowania"""
-        if self.current_line is not None:  # Wystarczy sprawdzenie current_line
+        if self.current_line is not None:
             self.current_line.p2 = (float(x), float(y))
 
     def finish_line(self) -> None:
         """Kończy rysowanie linii z walidacją i gwarancją spójności stanu"""
-        # Sprawdzenie spójności stanu
         if self.current_line is None:
-            self.drawing_started = False  # Naprawa ewentualnej niespójności
+            self.drawing_started = False
             return
 
-        # Walidacja długości linii
         line_length = math.hypot(
             self.current_line.p2[0] - self.current_line.p1[0],
             self.current_line.p2[1] - self.current_line.p1[1]
         )
 
-        if line_length < 10.0:  # Minimalna długość 10px
+        if line_length < 10.0:
             print("Odrzucono linię: zbyt krótka (minimalna długość: 10px)")
             self._reset_drawing_state()
             return
 
-        # Przypisanie bboxów do linii
         self._assign_boxes_to_line()
         self._reset_drawing_state()
 
@@ -188,21 +185,65 @@ class RowDetector:
                 return row.line
         return None
 
-
     def _assign_boxes_to_line(self) -> None:
-        """Przypisuje boxy do linii, tworząc nowy wiersz."""
+        """Optymalne przypisywanie boxów do linii z zachowaniem dokładnej logiki."""
         if not self.current_line:
             return
+
+        # 1. Przygotowanie danych linii
+        line_p1 = np.array(self.current_line.p1)
+        line_p2 = np.array(self.current_line.p2)
+        line_vector = line_p2 - line_p1
+        line_length = np.linalg.norm(line_vector)
+
+        # 2. Stwórz zbiór ID już przypisanych boxów
+        assigned_box_ids = {box.id for row in self.rows for box in row.boxes}
+
+        # 3. Oblicz prostokąt otaczający linię z marginesem
+        margin = 50  # pikseli
+        line_rect = (
+            min(self.current_line.p1[0], self.current_line.p2[0]) - margin,
+            min(self.current_line.p1[1], self.current_line.p2[1]) - margin,
+            max(self.current_line.p1[0], self.current_line.p2[0]) + margin,
+            max(self.current_line.p1[1], self.current_line.p2[1]) + margin
+        )
 
         new_row = self.Row(
             id=len(self.rows) + 1,
             line=self.current_line
         )
 
+        # 4. Filtruj i przypisuj boxy
         for box in self.bbox_manager.boxes:
-            new_row.add_box(box)
+            # Krok 1: Czy box nie jest już przypisany?
+            if box.id in assigned_box_ids:
+                continue
 
+            # Krok 2: Czy box jest w przybliżonym obszarze linii?
+            if not (box.x2 >= line_rect[0] and box.x1 <= line_rect[2] and
+                    box.y2 >= line_rect[1] and box.y1 <= line_rect[3]):
+                continue
+
+            # Krok 3: Dokładne sprawdzenie przecięcia
+            if new_row._does_line_intersect_box(self.current_line, box):
+                new_row.boxes.append(box)
+                print(f"Przypisano box {box.id} do wiersza {new_row.id}")
+
+        # Posortuj boxy w wierszu
+        new_row.boxes.sort(key=lambda b: b.x1 + b.width() / 2)
 
         if new_row.boxes:
             self.rows.append(new_row)
-            print(f"W wierszu {new_row.id} przypisano {len(new_row.boxes)} boksów.")
+            print(f"Utworzono nowy wiersz {new_row.id} z {len(new_row.boxes)} boxami")
+
+    def _distance_to_line(self, p1: Tuple[float, float], p2: Tuple[float, float],
+                          point: Tuple[float, float]) -> float:
+        """Oblicza odległość punktu od linii"""
+        x0, y0 = point
+        x1, y1 = p1
+        x2, y2 = p2
+
+        numerator = abs((y2 - y1) * x0 - (x2 - x1) * y0 + x2 * y1 - y2 * x1)
+        denominator = hypot(y2 - y1, x2 - x1)
+
+        return numerator / denominator if denominator != 0 else 0
