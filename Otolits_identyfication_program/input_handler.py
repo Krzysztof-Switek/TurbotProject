@@ -8,16 +8,16 @@ from math import hypot
 
 
 class WorkMode(Enum):
-    AUTO = auto()  # Tryb automatyczny (domyślny)
-    MANUAL = auto()  # Tryb manualny
+    AUTO = auto()
+    MANUAL = auto()
 
 
 class ManualMode(Enum):
-    ADD_BOX = auto()  # Dodawanie boxów
-    ADD_LINE = auto()  # Dodawanie linii
-    DELETE = auto()  # Usuwanie elementów
-    MOVE = auto()  # Przesuwanie elementów
-    RESIZE = auto()  # Zmiana rozmiaru
+    ADD_BOX = auto()
+    ADD_LINE = auto()
+    DELETE = auto()
+    MOVE = auto()
+    RESIZE = auto()
 
 
 @dataclass
@@ -25,7 +25,7 @@ class SelectionContext:
     element: Optional[object] = None
     drag_start: Optional[Tuple[int, int]] = None
     is_drawing: bool = False
-    corner_idx: Optional[Union[int, str]] = None  # Dla boxów: 0-3, dla linii: 'p1'/'p2'
+    corner_idx: Optional[Union[int, str]] = None
 
 
 class InputHandler:
@@ -37,7 +37,6 @@ class InputHandler:
         self.selection = SelectionContext()
         self.temp_box = None
 
-        # Uproszczona mapa klawiszy
         self.key_bindings = {
             ord('a'): lambda: self._set_work_mode(WorkMode.AUTO),
             ord('m'): lambda: self._set_work_mode(WorkMode.MANUAL),
@@ -46,13 +45,11 @@ class InputHandler:
             ord('d'): lambda: self._set_manual_mode(ManualMode.DELETE),
             ord('v'): lambda: self._set_manual_mode(ManualMode.MOVE),
             ord('r'): lambda: self._set_manual_mode(ManualMode.RESIZE),
-            27: self._reset_selection  # ESC
+            27: self._reset_selection
         }
 
     def get_mode_info(self) -> str:
-        """Zwraca tekst informujący o aktualnym trybie"""
         mode_info = f"Tryb: {'AUTO' if self.work_mode == WorkMode.AUTO else 'MANUAL'}"
-
         if self.work_mode == WorkMode.MANUAL:
             mode_names = {
                 ManualMode.ADD_BOX: "Dodawanie boxów",
@@ -62,11 +59,9 @@ class InputHandler:
                 ManualMode.RESIZE: "Zmiana rozmiaru"
             }
             mode_info += f" | {mode_names[self.manual_mode]}"
-
         return mode_info
 
     def keyboard_callback(self, key: int) -> bool:
-        """Obsługa zdarzeń klawiatury"""
         if key in self.key_bindings:
             self.key_bindings[key]()
             print(f"\n{self.get_mode_info()}")
@@ -74,22 +69,24 @@ class InputHandler:
         return False
 
     def mouse_callback(self, event, x, y) -> bool:
-        """Obsługa zdarzeń myszy"""
         if self.work_mode == WorkMode.AUTO:
             return False
 
-        handlers = {
-            cv2.EVENT_LBUTTONDOWN: self._handle_left_down,
-            cv2.EVENT_MOUSEMOVE: self._handle_mouse_move,
-            cv2.EVENT_LBUTTONUP: self._handle_left_up
-        }
-        return handlers.get(event, lambda *_: False)(x, y)
+        try:
+            x, y = int(x), int(y)
+            handlers = {
+                cv2.EVENT_LBUTTONDOWN: self._handle_left_down,
+                cv2.EVENT_MOUSEMOVE: self._handle_mouse_move,
+                cv2.EVENT_LBUTTONUP: self._handle_left_up
+            }
+            return handlers.get(event, lambda *_: False)(x, y)
+        except (ValueError, TypeError):
+            return False
 
     def _handle_left_down(self, x: int, y: int) -> bool:
         self.selection.is_drawing = True
 
         if self.manual_mode == ManualMode.ADD_BOX:
-            # Tworzymy tymczasowy box od razu przy pierwszym kliknięciu
             self.temp_box = BoundingBox(x, y, x, y, is_temp=True)
             self.selection.element = self.temp_box
         elif self.manual_mode == ManualMode.ADD_LINE:
@@ -124,7 +121,6 @@ class InputHandler:
         if not self.selection.is_drawing:
             return False
 
-        # Aktualizacja tymczasowego boxa podczas przeciągania
         if self.manual_mode == ManualMode.ADD_BOX and self.temp_box:
             self.temp_box.x2 = x
             self.temp_box.y2 = y
@@ -143,14 +139,20 @@ class InputHandler:
         if self.manual_mode == ManualMode.MOVE:
             if isinstance(self.selection.element, RowLine):
                 self.selection.element.move(dx, dy)
+                # Aktualizacja boxów dla wszystkich wierszy
+                for row in self.row_detector.rows:
+                    self._update_row_boxes(row)
             elif isinstance(self.selection.element, BoundingBox):
                 self.selection.element.move(dx, dy)
         elif self.manual_mode == ManualMode.RESIZE:
             if isinstance(self.selection.element, RowLine):
                 if self.selection.corner_idx == 'p1':
-                    self.selection.element.p1 = (float(x), float(y))
+                    self.selection.element.p1 = (x, y)
                 elif self.selection.corner_idx == 'p2':
-                    self.selection.element.p2 = (float(x), float(y))
+                    self.selection.element.p2 = (x, y)
+                # Aktualizacja boxów dla wszystkich wierszy
+                for row in self.row_detector.rows:
+                    self._update_row_boxes(row)
             elif isinstance(self.selection.element, BoundingBox):
                 self.selection.element.resize_corner(self.selection.corner_idx, x, y)
 
@@ -166,7 +168,7 @@ class InputHandler:
             x1, y1 = self.temp_box.x1, self.temp_box.y1
             x2, y2 = x, y
 
-            if x1 != x2 and y1 != y2:  # Tylko jeśli box ma dodatnią powierzchnię
+            if x1 != x2 and y1 != y2:
                 final_box = BoundingBox(
                     min(x1, x2),
                     min(y1, y2),
@@ -175,30 +177,48 @@ class InputHandler:
                     is_temp=False
                 )
                 self.bbox_manager.add_box(final_box)
-
-            self.temp_box = None  # Czyścimy tymczasowy box
+            self.temp_box = None
 
         elif self.manual_mode == ManualMode.ADD_LINE:
             self.row_detector.finish_line()
-            self.row_detector._assign_boxes_to_line()
+            # Aktualizacja boxów dla wszystkich wierszy
+            for row in self.row_detector.rows:
+                self._update_row_boxes(row)
 
         self._reset_selection()
         return True
 
     def _reset_selection(self) -> None:
-        """Resetuje stan zaznaczenia"""
         self.selection = SelectionContext()
         self.temp_box = None
 
     def _set_work_mode(self, mode: WorkMode) -> None:
-        """Ustawia tryb pracy (AUTO/MANUAL)"""
         self.work_mode = mode
         self._reset_selection()
         print(f"Aktywny tryb: {'AUTO' if mode == WorkMode.AUTO else 'MANUAL'}")
 
     def _set_manual_mode(self, mode: ManualMode) -> None:
-        """Ustawia tryb manualny"""
         if self.work_mode == WorkMode.MANUAL:
             self.manual_mode = mode
             self._reset_selection()
             print(f"Tryb manualny: {mode.name}")
+
+    def _update_row_boxes(self, row):
+        """Pomocnicza metoda do aktualizacji boxów w wierszu"""
+        # Tymczasowo zapisz ID boxów
+        old_box_ids = {box.id for box in row.boxes}
+
+        # Wyczyść obecne boxy (ale nie zmieniaj ich kolorów)
+        row.boxes.clear()
+
+        # Ponownie przypisz boxy do linii
+        for box in self.bbox_manager.boxes:
+            if row._does_line_intersect_box(row.line, box):
+                row.boxes.append(box)
+                if box.id not in old_box_ids:  # Tylko nowo dodane boxy zmieniają kolor
+                    box.color = (0, 255, 0)  # Zielony
+            elif box.id in old_box_ids:  # Box który wypadł z wiersza
+                box.color = (0, 0, 255)  # Czerwony
+
+        # Posortuj boxy
+        row.boxes.sort(key=lambda b: b.x1 + b.width() / 2)
