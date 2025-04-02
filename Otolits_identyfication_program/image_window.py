@@ -1,5 +1,6 @@
 import cv2
 import gc
+import traceback
 from row_detector import RowDetector
 from image_cropper import ImageCropper
 
@@ -11,21 +12,15 @@ class ImageWindow:
         self.input_handler = input_handler
         self.auto_detector = auto_detector
 
-        # Inicjalizacja komponentów
         self.current_image = None
         self.window_name = "Otolith Annotation Tool"
         self.image_cropper = ImageCropper(image_loader=image_loader)
-
-        # Inicjalizacja RowDetector
         self.input_handler.row_detector = RowDetector(bbox_manager)
 
-        # Flagi stanu
         self.dirty = True
         self._cached_images = []
 
-    # Podstawowe metody zarządzania obrazem
     def _prepare_display_image(self):
-        """Konwersja obrazu do formatu BGR z zarządzaniem pamięcią"""
         if self.current_image is None:
             return None
 
@@ -43,15 +38,12 @@ class ImageWindow:
         return converted
 
     def _release_resources(self):
-        """Czyszczenie zasobów graficznych"""
         for img in self._cached_images:
             img = None
         self._cached_images.clear()
         gc.collect()
 
-    # Renderowanie
     def update_display(self):
-        """Główna metoda renderująca obraz i adnotacje"""
         if not self.dirty:
             return
 
@@ -59,12 +51,13 @@ class ImageWindow:
         if display_image is None:
             return
 
-        # Rysowanie boxów (automatyczne i ręczne)
         for box in self.bbox_manager.boxes:
-            color = (0, 255, 0) if getattr(box, 'label', None) == "auto" else (0, 0, 255)
+            in_row = False
+            if hasattr(self.input_handler, 'row_detector'):
+                in_row = any(box in row.boxes for row in self.input_handler.row_detector.rows)
+            color = (0, 255, 0) if in_row else (0, 0, 255)
             box.draw(display_image, color=color)
 
-        # Rysowanie tymczasowych elementów
         if hasattr(self.input_handler, 'temp_box') and self.input_handler.temp_box:
             self.input_handler.temp_box.draw(display_image)
 
@@ -74,9 +67,7 @@ class ImageWindow:
         cv2.imshow(self.window_name, display_image)
         self.dirty = False
 
-    # Główna pętla
     def show_image(self):
-        """Główna pętla interfejsu użytkownika"""
         try:
             self.current_image = self.image_loader.load_image()
             if self.current_image is None:
@@ -106,7 +97,6 @@ class ImageWindow:
         finally:
             self._cleanup()
 
-    # Pomocnicze metody
     def mark_dirty(self):
         self.dirty = True
 
@@ -119,13 +109,30 @@ class ImageWindow:
 
     def _handle_next_image(self):
         self._release_resources()
-        next_image = self.image_loader.next_image()
-        if next_image:
+
+        try:
+            next_image = self.image_loader.next_image()
+            if next_image is None:  # Poprawione sprawdzanie
+                print("To już ostatnie zdjęcie.")
+                return
+
             self.current_image = next_image
             self.bbox_manager.clear_all()
+
+            # Automatyczne wykrywanie na nowym obrazie
+            if self.auto_detector and self.auto_detector.model:
+                auto_boxes = self.auto_detector.detect(next_image)
+                for (x1, y1, x2, y2) in auto_boxes:
+                    self.bbox_manager.add_box(x1, y1, x2, y2, label="auto")
+
             if hasattr(self.input_handler, 'row_detector'):
                 self.input_handler.row_detector.clear_rows()
+
             self.mark_dirty()
+
+        except Exception as e:
+            print(f"Błąd podczas ładowania obrazu: {str(e)}")
+            traceback.print_exc()
 
     def _handle_crop_boxes(self):
         self.image_cropper.process_cropping(self.bbox_manager, self.input_handler)
