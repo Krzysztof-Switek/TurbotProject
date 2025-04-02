@@ -35,6 +35,7 @@ class InputHandler:
         self.work_mode = WorkMode.AUTO
         self.manual_mode = ManualMode.ADD_BOX
         self.selection = SelectionContext()
+        self.temp_box = None
 
         # Uproszczona mapa klawiszy
         self.key_bindings = {
@@ -88,7 +89,9 @@ class InputHandler:
         self.selection.is_drawing = True
 
         if self.manual_mode == ManualMode.ADD_BOX:
-            self.selection.element = BoundingBox(x, y, x, y, is_temp=True)
+            # Tworzymy tymczasowy box od razu przy pierwszym kliknięciu
+            self.temp_box = BoundingBox(x, y, x, y, is_temp=True)
+            self.selection.element = self.temp_box
         elif self.manual_mode == ManualMode.ADD_LINE:
             self.row_detector.start_new_line(x, y)
         elif self.manual_mode == ManualMode.DELETE:
@@ -104,12 +107,11 @@ class InputHandler:
             elif line := self.row_detector.get_line_at(x, y):
                 if isinstance(line, RowLine):
                     self.selection.element = line
-        elif self.manual_mode == ManualMode.RESIZE:  # Nowy tryb
+        elif self.manual_mode == ManualMode.RESIZE:
             if box := self.bbox_manager.get_box_at(x, y):
                 self.selection.element = box
                 self.selection.corner_idx = box.get_nearest_corner(x, y)
             elif line := self.row_detector.get_line_at(x, y):
-                # Sprawdź który koniec linii jest bliżej
                 dist_p1 = hypot(x - line.p1[0], y - line.p1[1])
                 dist_p2 = hypot(x - line.p2[0], y - line.p2[1])
                 self.selection.element = line
@@ -119,9 +121,14 @@ class InputHandler:
         return True
 
     def _handle_mouse_move(self, x: int, y: int) -> bool:
-
         if not self.selection.is_drawing:
             return False
+
+        # Aktualizacja tymczasowego boxa podczas przeciągania
+        if self.manual_mode == ManualMode.ADD_BOX and self.temp_box:
+            self.temp_box.x2 = x
+            self.temp_box.y2 = y
+            return True
 
         if self.manual_mode == ManualMode.ADD_LINE:
             self.row_detector.update_line_end(x, y)
@@ -136,10 +143,8 @@ class InputHandler:
         if self.manual_mode == ManualMode.MOVE:
             if isinstance(self.selection.element, RowLine):
                 self.selection.element.move(dx, dy)
-
             elif isinstance(self.selection.element, BoundingBox):
                 self.selection.element.move(dx, dy)
-
         elif self.manual_mode == ManualMode.RESIZE:
             if isinstance(self.selection.element, RowLine):
                 if self.selection.corner_idx == 'p1':
@@ -152,18 +157,16 @@ class InputHandler:
         return True
 
     def _handle_left_up(self, x: int, y: int) -> bool:
-        """Obsługa zwolnienia LPM"""
         if not self.selection.is_drawing:
             return False
 
         self.selection.is_drawing = False
 
-        if self.manual_mode == ManualMode.ADD_BOX and self.selection.element:
-            x1, y1 = self.selection.element.x1, self.selection.element.y1
+        if self.manual_mode == ManualMode.ADD_BOX and self.temp_box:
+            x1, y1 = self.temp_box.x1, self.temp_box.y1
             x2, y2 = x, y
 
-            # Tylko jeśli box ma dodatnią powierzchnię
-            if x1 != x2 and y1 != y2:
+            if x1 != x2 and y1 != y2:  # Tylko jeśli box ma dodatnią powierzchnię
                 final_box = BoundingBox(
                     min(x1, x2),
                     min(y1, y2),
@@ -173,10 +176,11 @@ class InputHandler:
                 )
                 self.bbox_manager.add_box(final_box)
 
-        elif self.manual_mode == ManualMode.ADD_LINE:
-            self.row_detector.finish_line()  # <---- Zakończenie rysowania linii
-            self.row_detector._assign_boxes_to_line()  # <---- Automatyczne przypisanie boxów do linii
+            self.temp_box = None  # Czyścimy tymczasowy box
 
+        elif self.manual_mode == ManualMode.ADD_LINE:
+            self.row_detector.finish_line()
+            self.row_detector._assign_boxes_to_line()
 
         self._reset_selection()
         return True
@@ -184,6 +188,7 @@ class InputHandler:
     def _reset_selection(self) -> None:
         """Resetuje stan zaznaczenia"""
         self.selection = SelectionContext()
+        self.temp_box = None
 
     def _set_work_mode(self, mode: WorkMode) -> None:
         """Ustawia tryb pracy (AUTO/MANUAL)"""

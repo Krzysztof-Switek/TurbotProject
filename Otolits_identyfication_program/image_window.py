@@ -102,25 +102,19 @@ class ImageWindow:
         if display_image is None:
             return
 
-        # Narysuj wszystkie boxy (zielone)
+        # 1. Najpierw rysujemy tymczasowy box (jeśli istnieje)
+        if hasattr(self.input_handler, 'temp_box') and self.input_handler.temp_box:
+            self.input_handler.temp_box.draw(display_image, thickness=1)
+
+        # 2. Potem rysujemy wszystkie stałe boxy
         for box in self.bbox_manager.boxes:
             box.draw(display_image)
 
-        # Narysuj tymczasowy box podczas tworzenia
-        if (self.input_handler.work_mode == WorkMode.MANUAL and
-                self.input_handler.manual_mode == ManualMode.BOX and
-                self.input_handler.selection.is_drawing and
-                self.input_handler.selection.element):
-            box = self.input_handler.selection.element
-            cv2.rectangle(display_image,
-                          (int(box.x1), int(box.y1)),
-                          (int(box.x2), int(box.y2)),
-                          (0, 0, 255), 1)
-
-        # Narysuj linie wierszy
+        # 3. Rysujemy linie wierszy
         if hasattr(self.input_handler, 'row_detector'):
             self.input_handler.row_detector.draw_rows(display_image)
 
+        # 4. Rysujemy informację o trybie
         self._draw_mode_info(display_image)
 
         # Cache'owanie wyrenderowanego obrazu
