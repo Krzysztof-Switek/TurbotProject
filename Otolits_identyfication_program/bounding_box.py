@@ -119,12 +119,12 @@ class BoundingBox:
 
     # ----- Wizualizacja i serializacja -----
     def draw(self, image: np.ndarray, color: Optional[Tuple[int, int, int]] = None,
-             thickness: int = 2) -> None:
+             thickness: int = 1) -> None:
         """Rysuje box na obrazie"""
         color = color if color is not None else self.color
         if self.selected:
             color = (0, 0, 255)  # Czerwony dla zaznaczonego
-            thickness = max(3, thickness)
+            thickness = max(1, thickness)
 
         cv2.rectangle(image,
                       (int(self.x1), int(self.y1)),

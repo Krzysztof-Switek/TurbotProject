@@ -115,7 +115,7 @@ class ImageWindow:
             cv2.rectangle(display_image,
                           (int(box.x1), int(box.y1)),
                           (int(box.x2), int(box.y2)),
-                          (0, 0, 255), 2)
+                          (0, 0, 255), 1)
 
         # Narysuj linie wierszy
         if hasattr(self.input_handler, 'row_detector'):
