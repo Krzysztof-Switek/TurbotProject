@@ -103,18 +103,24 @@ class ImageWindow:
                 self.mark_dirty()
                 self.update_display()
 
-                key = cv2.waitKey(1) & 0xFF
-                if key == ord('q') or cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) < 1:
-                    break
+                key = cv2.waitKey(1)
+                if key != -1:
+                    key = key & 0xFF
 
-                if key == 13:  # Enter
-                    self._handle_crop_boxes()
+                    if key == ord('q') or cv2.getWindowProperty(self.window_name, cv2.WND_PROP_VISIBLE) < 1:
+                        break
 
-                if key == ord('n'):
-                    self._handle_next_image()
+                    if key == 13:  # Enter
+                        self._handle_crop_boxes()
 
-                if self.input_handler.keyboard_callback(key):
-                    self.mark_dirty()
+                    if key == ord('n'):
+                        self._handle_next_image()
+
+                    # Konwersja na małą literę
+                    key_char = chr(key).lower()
+
+                    if self.input_handler.keyboard_callback(ord(key_char)):
+                        self.mark_dirty()
 
         finally:
             self._cleanup()

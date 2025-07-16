@@ -63,11 +63,8 @@ class InputHandler:
 
     def get_key_bindings_info(self) -> dict:
         base_keys = {
-            "a": "Tryb automatyczny",
-            "m": "Tryb manualny",
             "n": "Następne zdjęcie",
-            "q": "Wyjdź",
-            "Enter": "Wytnij boxy"
+            "q": "Wyjdź"
         }
         manual_keys = {
             "b": "Dodaj box",
@@ -77,9 +74,13 @@ class InputHandler:
             "r": "Zmień rozmiar",
             "Esc": "Anuluj"
         }
+
+        bindings = base_keys
         if self.work_mode == WorkMode.MANUAL:
-            return {**base_keys, **manual_keys}
-        return base_keys
+            bindings.update(manual_keys)
+
+        bindings["Enter"] = "Wytnij boxy"
+        return bindings
 
     def keyboard_callback(self, key: int) -> bool:
         if key in self.key_bindings:
