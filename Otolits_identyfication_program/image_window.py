@@ -149,9 +149,8 @@ class ImageWindow:
                 self.input_handler.set_work_mode(self.input_handler.WorkMode.MANUAL)
                 self.input_handler.set_manual_mode(self.input_handler.ManualMode.ADD_LINE)
 
-            if hasattr(self.input_handler, 'row_detector'):
-                self.input_handler.row_detector.clear_rows()
-
+            self.input_handler.row_detector = RowDetector(self.bbox_manager)
+            self.input_handler.reset_to_defaults()
             self.mark_dirty()
 
         except Exception as e:

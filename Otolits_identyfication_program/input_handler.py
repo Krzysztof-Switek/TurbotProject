@@ -223,6 +223,11 @@ class InputHandler:
             self._reset_selection()
             print(f"Tryb manualny: {mode.name}")
 
+    def reset_to_defaults(self) -> None:
+        self.work_mode = WorkMode.MANUAL
+        self.manual_mode = ManualMode.ADD_LINE
+        self._reset_selection()
+
     def _update_row_boxes(self, row):
         """Pomocnicza metoda do aktualizacji boxów w wierszu"""
         # Tymczasowo zapisz ID boxów
