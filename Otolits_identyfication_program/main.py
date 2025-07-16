@@ -52,11 +52,12 @@ if __name__ == "__main__":
             print("\nUwaga: Model YOLO nie został znaleziony. Działam w trybie manualnym.")
 
         # 6. Informacje o sterowaniu
-        print("\nSterowanie ręczne:")
-        print("m - tryb manualny")
-        print("v - przesuwanie boxów")
-        print("r - zmiana rozmiaru")
-        print("d - usuwanie")
+        print("\nSterowanie:")
+        print("l - dodawanie linii")
+        print("v - przesuwanie boxów/linii")
+        print("r - zmiana rozmiaru boxów/linii")
+        print("d - usuwanie boxów/linii")
+        print("b - dodawanie boxów")
         print("n - następny obraz")
         print("q - wyjście")
 

@@ -32,8 +32,8 @@ class InputHandler:
     def __init__(self, bbox_manager, row_detector):
         self.bbox_manager = bbox_manager
         self.row_detector = row_detector
-        self.work_mode = WorkMode.AUTO
-        self.manual_mode = ManualMode.ADD_BOX
+        self.work_mode = WorkMode.MANUAL
+        self.manual_mode = ManualMode.ADD_LINE
         self.selection = SelectionContext()
         self.temp_box = None
 
