@@ -140,6 +140,8 @@ class ImageWindow:
 
             self.current_image = next_image
             self.bbox_manager.clear_all()
+            if hasattr(self.input_handler, 'row_detector'):
+                self.input_handler.row_detector.clear_rows()
 
             # Automatyczne wykrywanie na nowym obrazie
             if self.auto_detector and self.auto_detector.model:
