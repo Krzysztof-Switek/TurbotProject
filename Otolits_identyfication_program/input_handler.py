@@ -61,6 +61,26 @@ class InputHandler:
             mode_info += f" | {mode_names[self.manual_mode]}"
         return mode_info
 
+    def get_key_bindings_info(self) -> dict:
+        base_keys = {
+            "a": "Tryb automatyczny",
+            "m": "Tryb manualny",
+            "n": "Następne zdjęcie",
+            "q": "Wyjdź",
+            "Enter": "Wytnij boxy"
+        }
+        manual_keys = {
+            "b": "Dodaj box",
+            "l": "Dodaj linię",
+            "d": "Usuń",
+            "v": "Przesuń",
+            "r": "Zmień rozmiar",
+            "Esc": "Anuluj"
+        }
+        if self.work_mode == WorkMode.MANUAL:
+            return {**base_keys, **manual_keys}
+        return base_keys
+
     def keyboard_callback(self, key: int) -> bool:
         if key in self.key_bindings:
             self.key_bindings[key]()

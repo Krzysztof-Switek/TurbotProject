@@ -3,6 +3,8 @@ import gc
 import traceback
 from row_detector import RowDetector
 from image_cropper import ImageCropper
+from PIL import Image, ImageDraw, ImageFont
+import numpy as np
 
 
 class ImageWindow:
@@ -16,6 +18,10 @@ class ImageWindow:
         self.window_name = "Otolith Annotation Tool"
         self.image_cropper = ImageCropper(image_loader=image_loader)
         self.input_handler.row_detector = RowDetector(bbox_manager)
+        try:
+            self.font = ImageFont.truetype("arial.ttf", 15)
+        except IOError:
+            self.font = ImageFont.load_default()
 
         self.dirty = True
         self._cached_images = []
@@ -64,6 +70,21 @@ class ImageWindow:
         if hasattr(self.input_handler, 'row_detector'):
             self.input_handler.row_detector.draw_rows(display_image)
 
+        pil_image = Image.fromarray(cv2.cvtColor(display_image, cv2.COLOR_BGR2RGB))
+        draw = ImageDraw.Draw(pil_image)
+
+        mode_info = self.input_handler.get_mode_info()
+        draw.text((10, 10), mode_info, font=self.font, fill=(255, 255, 255))
+
+        y_pos = pil_image.height - 30
+        font_small = self.font.font_variant(size=12)
+        for key, desc in self.input_handler.get_key_bindings_info().items():
+            text = f"{key}: {desc}"
+            draw.text((10, y_pos), text, font=font_small, fill=(255, 255, 255))
+            y_pos -= 20
+
+        display_image = cv2.cvtColor(np.array(pil_image), cv2.COLOR_RGB2BGR)
+
         cv2.imshow(self.window_name, display_image)
         self.dirty = False
 
@@ -76,6 +97,7 @@ class ImageWindow:
 
             cv2.namedWindow(self.window_name, cv2.WINDOW_NORMAL)
             cv2.setMouseCallback(self.window_name, self._handle_mouse_event)
+            self.mark_dirty()
 
             while True:
                 self.mark_dirty()
@@ -124,6 +146,8 @@ class ImageWindow:
                 auto_boxes = self.auto_detector.detect(next_image)
                 for (x1, y1, x2, y2) in auto_boxes:
                     self.bbox_manager.add_box(x1, y1, x2, y2, label="auto")
+                self.input_handler.work_mode = self.input_handler.WorkMode.MANUAL
+                self.input_handler.manual_mode = self.input_handler.ManualMode.ADD_LINE
 
             if hasattr(self.input_handler, 'row_detector'):
                 self.input_handler.row_detector.clear_rows()
