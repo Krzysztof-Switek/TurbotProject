@@ -41,13 +41,26 @@ class ImageCropper:
         # Sort rows from top to bottom
         sorted_rows = sorted(rows, key=lambda row: min(b.y1 for b in row.boxes))
 
+        # Liczność wycinków A (max 3 pierwsze globalnie) i B (max 3 kolejne)
+        total = len(sorted_rows)
+        n_a = min(total, 3)
+        n_b = max(0, min(total - 3, 3))
+
         for absolute_row_idx, row in enumerate(sorted_rows, start=1):
-            # Determine prefix and row number for filename
-            if absolute_row_idx <= 3:  # Wiersze 1-3
-                prefix = f"A_{absolute_row_idx}"
-                display_row_num = absolute_row_idx
-            else:  # Wiersze 4-6
-                prefix = f"B_{absolute_row_idx - 3}"  # 4→1, 5→2, 6→3
+            # Numerowanie "od dołu" w obrębie wycinka: najniższy wiersz = _3,
+            # każdy kolejny w górę numer o 1 mniejszy.
+            if absolute_row_idx <= 3:  # Wycinek A
+                offset = absolute_row_idx - 1          # 0..n_a-1
+                row_num = 3 - (n_a - 1 - offset)
+                prefix = f"A_{row_num}"
+                display_row_num = row_num
+            elif absolute_row_idx <= 6:  # Wycinek B
+                offset = absolute_row_idx - 4          # 0..n_b-1
+                row_num = 3 - (n_b - 1 - offset)
+                prefix = f"B_{row_num}"
+                display_row_num = row_num
+            else:  # >6 wierszy — anomalia, zachowujemy obecne zachowanie B_4, B_5...
+                prefix = f"B_{absolute_row_idx - 3}"
                 display_row_num = absolute_row_idx - 3
 
             # Sort boxes left to right
