@@ -75,7 +75,7 @@ class InputHandler:
             "Esc": "Anuluj"
         }
 
-        bindings = base_keys
+        bindings = base_keys.copy()
         if self.work_mode == WorkMode.MANUAL:
             bindings.update(manual_keys)
 
@@ -123,8 +123,7 @@ class InputHandler:
             if box := self.bbox_manager.get_box_at(x, y):
                 self.selection.element = box
             elif line := self.row_detector.get_line_at(x, y):
-                if isinstance(line, RowLine):
-                    self.selection.element = line
+                self.selection.element = line
         elif self.manual_mode == ManualMode.RESIZE:
             if box := self.bbox_manager.get_box_at(x, y):
                 self.selection.element = box
@@ -230,21 +229,15 @@ class InputHandler:
         self._reset_selection()
 
     def _update_row_boxes(self, row):
-        """Pomocnicza metoda do aktualizacji boxów w wierszu"""
-        # Tymczasowo zapisz ID boxów
-        old_box_ids = {box.id for box in row.boxes}
+        """Pomocnicza metoda do aktualizacji boxów w wierszu.
 
-        # Wyczyść obecne boxy (ale nie zmieniaj ich kolorów)
+        Kolory są ustalane w ImageWindow.update_display na podstawie
+        przynależności boxa do wiersza — tu tylko aktualizujemy listę.
+        """
         row.boxes.clear()
 
-        # Ponownie przypisz boxy do linii
         for box in self.bbox_manager.boxes:
             if row._does_line_intersect_box(row.line, box):
                 row.boxes.append(box)
-                if box.id not in old_box_ids:  # Tylko nowo dodane boxy zmieniają kolor
-                    box.color = (0, 255, 0)  # Zielony
-            elif box.id in old_box_ids:  # Box który wypadł z wiersza
-                box.color = (0, 0, 255)  # Czerwony
 
-        # Posortuj boxy
         row.boxes.sort(key=lambda b: b.x1 + b.width() / 2)

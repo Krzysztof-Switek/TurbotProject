@@ -3,6 +3,7 @@ import gc
 import traceback
 from row_detector import RowDetector
 from image_cropper import ImageCropper
+from input_handler import WorkMode, ManualMode
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
 
@@ -44,8 +45,6 @@ class ImageWindow:
         return converted
 
     def _release_resources(self):
-        for img in self._cached_images:
-            img = None
         self._cached_images.clear()
         gc.collect()
 
@@ -154,8 +153,8 @@ class ImageWindow:
                 auto_boxes = self.auto_detector.detect(next_image)
                 for (x1, y1, x2, y2) in auto_boxes:
                     self.bbox_manager.add_box(x1, y1, x2, y2, label="auto")
-                self.input_handler.set_work_mode(self.input_handler.WorkMode.MANUAL)
-                self.input_handler.set_manual_mode(self.input_handler.ManualMode.ADD_LINE)
+                self.input_handler._set_work_mode(WorkMode.MANUAL)
+                self.input_handler._set_manual_mode(ManualMode.ADD_LINE)
 
             self.input_handler.row_detector = RowDetector(self.bbox_manager)
             self.input_handler.reset_to_defaults()

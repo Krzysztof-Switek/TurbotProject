@@ -1,6 +1,5 @@
 from image_loader import ImageLoader
 from bounding_box_manager import BoundingBoxManager
-from row_detector import RowDetector
 from image_window import ImageWindow
 from input_handler import InputHandler
 import sys, os, traceback
@@ -31,10 +30,9 @@ if __name__ == "__main__":
         print(f"Kształt: {first_image.shape}")
         print(f"Typ danych: {first_image.dtype}")
 
-        # 4. Inicjalizacja komponentów
+        # 4. Inicjalizacja komponentów (RowDetector tworzy ImageWindow)
         bbox_manager = BoundingBoxManager()
-        row_detector = RowDetector(bbox_manager)
-        input_handler = InputHandler(bbox_manager, row_detector)
+        input_handler = InputHandler(bbox_manager, None)
 
         # 5. Automatyczne wykrywanie otolitów
         auto_detector = AutoDetector(model_path='yolo/weights/best.pt')

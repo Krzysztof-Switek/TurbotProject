@@ -10,7 +10,7 @@
       <excludeFolder url="file://$MODULE_DIR$/Picks_modification_scripts/TUR_resized" />
       <excludeFolder url="file://$MODULE_DIR$/runs" />
     </content>
-    <orderEntry type="jdk" jdkName="Python 3.10 (TurbotProject)" jdkType="Python SDK" />
+    <orderEntry type="jdk" jdkName="Python 3.14 (TurbotProject)" jdkType="Python SDK" />
     <orderEntry type="sourceFolder" forTests="false" />
   </component>
 </module>

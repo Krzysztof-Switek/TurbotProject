@@ -7,7 +7,8 @@ from dataclasses import dataclass
 if TYPE_CHECKING:
     from image_loader import ImageLoader
     from row_detector import RowLine
-    from bounding_box_manager import BoundingBox
+    from bounding_box import BoundingBox
+    from bounding_box_manager import BoundingBoxManager
     from input_handler import InputHandler
 
 

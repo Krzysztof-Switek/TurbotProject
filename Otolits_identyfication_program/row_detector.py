@@ -28,13 +28,6 @@ class RowDetector:
         line: RowLine
         boxes: List[BoundingBox] = field(default_factory=list)
 
-        @property
-        def slope(self) -> float:
-            """Oblicza nachylenie linii wiersza (dy/dx)."""
-            dx = self.line.p2[0] - self.line.p1[0]
-            dy = self.line.p2[1] - self.line.p1[1]
-            return dy / dx if dx != 0 else float('inf')  # Unikamy dzielenia przez zero
-
         def add_box(self, box: BoundingBox) -> bool:
             """Dodaje box jeśli przecina się z linią wiersza"""
             if not self._does_line_intersect_box(self.line, box):
@@ -168,11 +161,8 @@ class RowDetector:
 
     def remove_line(self, line: RowLine) -> bool:
         """Usuwa linię z listy"""
-        try:
-            self.rows = [row for row in self.rows if row.line != line]
-            return True
-        except ValueError:
-            return False
+        self.rows = [row for row in self.rows if row.line != line]
+        return True
 
     def get_line_at(self, x: int, y: int, tolerance: float = 10.0) -> Optional[RowLine]:
         """Znajduje linię w pobliżu punktu (x,y)"""
@@ -227,7 +217,6 @@ class RowDetector:
             # Krok 3: Dokładne sprawdzenie przecięcia
             if new_row._does_line_intersect_box(self.current_line, box):
                 new_row.boxes.append(box)
-                box.color = (0, 255, 0)  # JEDYNA ZMIANA - zmiana koloru na zielony
                 print(f"Przypisano box {box.id} do wiersza {new_row.id}")
 
         # Posortuj boxy w wierszu

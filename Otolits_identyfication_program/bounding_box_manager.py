@@ -35,7 +35,8 @@ class BoundingBoxManager:
         """Aktualizuje współrzędne istniejącego boxa"""
         if box not in self.boxes:
             raise ValueError("Box nie jest zarządzany przez ten manager")
-        box.update(x1, y1, x2, y2)
+        box.x1, box.y1, box.x2, box.y2 = x1, y1, x2, y2
+        box._invalidate_cache()
         self.invalidate_cache()
 
     # Operacje zapytaniowe

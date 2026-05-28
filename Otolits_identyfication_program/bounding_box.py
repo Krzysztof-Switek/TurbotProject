@@ -43,17 +43,19 @@ class BoundingBox:
         Args:
             corner_idx: 0-lewy górny, 1-prawy górny, 2-lewy dolny, 3-prawy dolny
         """
-        corners = [
-            (0, lambda x, y: setattr(self, 'x1', x) or setattr(self, 'y1', y)),
-            (1, lambda x, y: setattr(self, 'x2', x) or setattr(self, 'y1', y)),
-            (2, lambda x, y: setattr(self, 'x1', x) or setattr(self, 'y2', y)),
-            (3, lambda x, y: setattr(self, 'x2', x) or setattr(self, 'y2', y))
-        ]
+        if corner_idx == 0:
+            self.x1, self.y1 = x, y
+        elif corner_idx == 1:
+            self.x2, self.y1 = x, y
+        elif corner_idx == 2:
+            self.x1, self.y2 = x, y
+        elif corner_idx == 3:
+            self.x2, self.y2 = x, y
+        else:
+            return
 
-        if 0 <= corner_idx < 4:
-            corners[corner_idx][1](x, y)
-            self._normalize_coords()
-            self._invalidate_cache()
+        self._normalize_coords()
+        self._invalidate_cache()
 
     def _normalize_coords(self) -> None:
         """Upewnia się że x1 < x2 i y1 < y2"""
