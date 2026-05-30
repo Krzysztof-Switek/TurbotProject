@@ -2,7 +2,7 @@ import cv2
 import gc
 import traceback
 from row_detector import RowDetector
-from image_cropper import ImageCropper
+from image_cropper import ImageCropper, compute_row_labels
 from input_handler import WorkMode, ManualMode
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
@@ -74,6 +74,34 @@ class ImageWindow:
 
         mode_info = self.input_handler.get_mode_info()
         draw.text((10, 10), mode_info, font=self.font, fill=(255, 255, 255))
+
+        # Etykiety wierszy (A_1, B_3, ...) przy lewym końcu linii.
+        if hasattr(self.input_handler, 'row_detector'):
+            row_labels, label_err = compute_row_labels(
+                self.input_handler.row_detector.rows
+            )
+            if label_err:
+                draw.text(
+                    (10, pil_image.height - 50),
+                    label_err,
+                    font=self.font,
+                    fill=(255, 80, 80),
+                    stroke_width=2, stroke_fill=(0, 0, 0),
+                )
+            else:
+                for row in self.input_handler.row_detector.rows:
+                    label = row_labels.get(id(row))
+                    if not label:
+                        continue
+                    x = int(row.line.p1[0]) + 8
+                    y = int(row.line.p1[1]) - 20
+                    draw.text(
+                        (x, y),
+                        label,
+                        font=self.font,
+                        fill=(255, 255, 255),
+                        stroke_width=2, stroke_fill=(0, 0, 0),
+                    )
 
         y_pos = pil_image.height - 30
         font_small = self.font.font_variant(size=12)
