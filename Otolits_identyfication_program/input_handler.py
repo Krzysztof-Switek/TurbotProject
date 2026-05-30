@@ -253,41 +253,65 @@ class InputHandler:
         row.boxes.sort(key=lambda b: b.x1 + b.width() / 2)
 
     def _edit_row_label(self, line: RowLine) -> None:
-        """Otwiera tkinter prompt z wyborem A/B/auto i ustawia override w Row."""
+        """Otwiera tkinter popup z dropdownem A/B/auto i ustawia override w Row."""
         row = next((r for r in self.row_detector.rows if r.line is line), None)
         if row is None:
             return
 
-        import tkinter as tk
-        from tkinter import simpledialog
-
-        current = row.compartment_override or "auto"
-        root = tk.Tk()
-        root.withdraw()
-        try:
-            choice = simpledialog.askstring(
-                "Etykieta wiersza",
-                "Wycinek (A / B / auto):",
-                initialvalue=current,
-                parent=root,
-            )
-        finally:
-            root.destroy()
-
+        choice = self._prompt_compartment_choice(row.compartment_override)
         if choice is None:
             return  # user kliknął Cancel
-        value = choice.strip().upper()
-        if value in ("A", "B"):
+        if choice in ("A", "B"):
             old_override = row.compartment_override
-            row.compartment_override = value
+            row.compartment_override = choice
             _, err = compute_row_labels(self.row_detector.rows)
             if err:
                 row.compartment_override = old_override
-                print(f"Nie można ustawić override='{value}': {err}")
+                print(f"Nie można ustawić override='{choice}': {err}")
                 return
-            print(f"Wiersz: override -> {value}")
-        elif value in ("AUTO", ""):
+            print(f"Wiersz: override -> {choice}")
+        else:  # "auto"
             row.compartment_override = None
             print("Wiersz: override -> auto (geometria)")
-        else:
-            print(f"Nieprawidłowa wartość '{choice}'. Dozwolone: A, B, auto.")
+
+    @staticmethod
+    def _prompt_compartment_choice(current: Optional[str]) -> Optional[str]:
+        """Modalny popup z Combobox A/B/auto. Zwraca wybór lub None (Cancel)."""
+        import tkinter as tk
+        from tkinter import ttk
+
+        root = tk.Tk()
+        root.title("Etykieta wiersza")
+        root.resizable(False, False)
+
+        result: list = [None]
+
+        ttk.Label(root, text="Wycinek:").grid(row=0, column=0, padx=10, pady=10, sticky="w")
+        var = tk.StringVar(value=current or "auto")
+        combo = ttk.Combobox(
+            root,
+            textvariable=var,
+            values=["A", "B", "auto"],
+            state="readonly",
+            width=10,
+        )
+        combo.grid(row=0, column=1, padx=10, pady=10)
+        combo.focus_set()
+
+        def on_ok():
+            result[0] = var.get()
+            root.destroy()
+
+        def on_cancel():
+            root.destroy()
+
+        btn_frame = ttk.Frame(root)
+        btn_frame.grid(row=1, column=0, columnspan=2, pady=(0, 10))
+        ttk.Button(btn_frame, text="OK", command=on_ok).grid(row=0, column=0, padx=5)
+        ttk.Button(btn_frame, text="Anuluj", command=on_cancel).grid(row=0, column=1, padx=5)
+
+        root.bind("<Return>", lambda _e: on_ok())
+        root.bind("<Escape>", lambda _e: on_cancel())
+
+        root.mainloop()
+        return result[0]
