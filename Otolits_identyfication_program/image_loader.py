@@ -6,15 +6,28 @@ import exifread
 
 # Cache dla rozmiaru ekranu
 _SCREEN_SIZE = None
+# Singleton Tk root - jeden na sesję (tkinter źle znosi wiele Tk() w jednej apce).
+_TK_ROOT = None
+
+
+def get_tk_root():
+    """Singleton Tk root. Tworzy `Tk()` raz, withdraw'uje i trzyma jako parent
+    dla wszystkich popupów (Toplevel). Eliminuje cold-start drugiego Tk i
+    wielosekundowe opóźnienia otwierania dialogów.
+    """
+    global _TK_ROOT
+    if _TK_ROOT is None:
+        import tkinter as tk
+        _TK_ROOT = tk.Tk()
+        _TK_ROOT.withdraw()
+    return _TK_ROOT
 
 
 def get_screen_size() -> Tuple[int, int]:
-    """Pobiera rozmiar ekranu z cache'em (tylko 1 inicjalizacja Tkinter)"""
+    """Pobiera rozmiar ekranu z cache'em (1× przy starcie)."""
     global _SCREEN_SIZE
     if _SCREEN_SIZE is None:
-        import tkinter as tk
-        root = tk.Tk()
-        root.withdraw()
+        root = get_tk_root()
         _SCREEN_SIZE = (root.winfo_screenwidth(), root.winfo_screenheight())
     return _SCREEN_SIZE
 

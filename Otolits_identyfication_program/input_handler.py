@@ -284,20 +284,28 @@ class InputHandler:
 
     @staticmethod
     def _prompt_compartment_choice(current: Optional[str]) -> Optional[str]:
-        """Modalny popup z Combobox A/B/auto. Zwraca wybór lub None (Cancel)."""
+        """Modalny popup z Combobox A/B/auto. Zwraca wybór lub None (Cancel).
+
+        Używa współdzielonego Tk root (image_loader.get_tk_root) +
+        Toplevel z wait_window, żeby uniknąć cold-startu drugiego Tk().
+        """
         import tkinter as tk
         from tkinter import ttk
+        from image_loader import get_tk_root
 
-        root = tk.Tk()
-        root.title("Etykieta wiersza")
-        root.resizable(False, False)
+        root = get_tk_root()
+        win = tk.Toplevel(root)
+        win.title("Etykieta wiersza")
+        win.resizable(False, False)
+        win.transient(root)
+        win.grab_set()
 
         result: list = [None]
 
-        ttk.Label(root, text="Wycinek:").grid(row=0, column=0, padx=10, pady=10, sticky="w")
+        ttk.Label(win, text="Wycinek:").grid(row=0, column=0, padx=10, pady=10, sticky="w")
         var = tk.StringVar(value=current or "auto")
         combo = ttk.Combobox(
-            root,
+            win,
             textvariable=var,
             values=["A", "B", "auto"],
             state="readonly",
@@ -308,18 +316,18 @@ class InputHandler:
 
         def on_ok():
             result[0] = var.get()
-            root.destroy()
+            win.destroy()
 
         def on_cancel():
-            root.destroy()
+            win.destroy()
 
-        btn_frame = ttk.Frame(root)
+        btn_frame = ttk.Frame(win)
         btn_frame.grid(row=1, column=0, columnspan=2, pady=(0, 10))
         ttk.Button(btn_frame, text="OK", command=on_ok).grid(row=0, column=0, padx=5)
         ttk.Button(btn_frame, text="Anuluj", command=on_cancel).grid(row=0, column=1, padx=5)
 
-        root.bind("<Return>", lambda _e: on_ok())
-        root.bind("<Escape>", lambda _e: on_cancel())
+        win.bind("<Return>", lambda _e: on_ok())
+        win.bind("<Escape>", lambda _e: on_cancel())
 
-        root.mainloop()
+        win.wait_window()
         return result[0]
