@@ -104,18 +104,10 @@ class InputHandler:
                 cv2.EVENT_LBUTTONDOWN: self._handle_left_down,
                 cv2.EVENT_MOUSEMOVE: self._handle_mouse_move,
                 cv2.EVENT_LBUTTONUP: self._handle_left_up,
-                cv2.EVENT_RBUTTONDOWN: self._handle_right_down,
             }
             return handlers.get(event, lambda *_: False)(x, y)
         except (ValueError, TypeError):
             return False
-
-    def _handle_right_down(self, x: int, y: int) -> bool:
-        """Prawy klik = szybka edycja etykiety wiersza (bez wchodzenia w tryb 'e')."""
-        if line := self.row_detector.get_line_at(x, y):
-            self._edit_row_label(line)
-            return True
-        return False
 
     def _handle_left_down(self, x: int, y: int) -> bool:
         self.selection.is_drawing = True
