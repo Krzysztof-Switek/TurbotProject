@@ -280,6 +280,9 @@ class InputHandler:
 
         Używa współdzielonego Tk root (image_loader.get_tk_root) +
         Toplevel z wait_window, żeby uniknąć cold-startu drugiego Tk().
+
+        Po destroy Toplevel pumpujemy pending eventy tkinter
+        (update_idletasks + update) żeby cv2 odzyskało focus.
         """
         import tkinter as tk
         from tkinter import ttk
@@ -290,7 +293,6 @@ class InputHandler:
         win.title("Etykieta wiersza")
         win.resizable(False, False)
         win.transient(root)
-        win.grab_set()
 
         result: list = [None]
 
@@ -321,5 +323,18 @@ class InputHandler:
         win.bind("<Return>", lambda _e: on_ok())
         win.bind("<Escape>", lambda _e: on_cancel())
 
+        # Modalne, ale wait_window zamiast grab_set+mainloop -
+        # mniej ryzyka zostawienia fokusu na ukrytym root po destroy.
+        win.lift()
+        win.focus_force()
         win.wait_window()
+
+        # Pumpuj pending tkinter eventy (oddaj kontrolę) zanim cv2
+        # przejmie z powrotem - inaczej cv2 może gubić klawisze.
+        try:
+            root.update_idletasks()
+            root.update()
+        except tk.TclError:
+            pass
+
         return result[0]
