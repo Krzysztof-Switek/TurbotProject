@@ -55,7 +55,30 @@ def compute_row_labels(rows) -> Tuple[Dict[int, str], Optional[str]]:
 
 
 def _split_compartments(sorted_rows):
-    """Podział wierszy na wycinek A (górny) i B (dolny) przez największą lukę Y.
+    """Podział wierszy na wycinek A (górny) i B (dolny).
+
+    Wiersze z compartment_override == 'A' / 'B' trafiają do swojego wycinka
+    niezależnie od geometrii. Pozostałe (override == None) dzielone przez
+    największą lukę Y między sobą. Końcowe listy posortowane top→bottom.
+
+    sorted_rows musi być już posortowane top→bottom.
+    """
+    def _row_top_y(row):
+        return min(b.y1 for b in row.boxes)
+
+    forced_a = [r for r in sorted_rows if getattr(r, 'compartment_override', None) == 'A']
+    forced_b = [r for r in sorted_rows if getattr(r, 'compartment_override', None) == 'B']
+    auto = [r for r in sorted_rows if getattr(r, 'compartment_override', None) is None]
+
+    auto_a, auto_b = _split_auto_by_largest_gap(auto)
+
+    a_rows = sorted(forced_a + auto_a, key=_row_top_y)
+    b_rows = sorted(forced_b + auto_b, key=_row_top_y)
+    return a_rows, b_rows
+
+
+def _split_auto_by_largest_gap(sorted_rows):
+    """Dzieli wiersze (bez override) przez największą lukę Y między centroidami.
 
     sorted_rows musi być już posortowane top→bottom.
     """

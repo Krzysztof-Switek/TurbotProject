@@ -27,6 +27,8 @@ class RowDetector:
         id: int
         line: RowLine
         boxes: List[BoundingBox] = field(default_factory=list)
+        # None = przypisanie A/B przez geometrię; 'A' / 'B' = manualny override.
+        compartment_override: Optional[str] = None
 
         def add_box(self, box: BoundingBox) -> bool:
             """Dodaje box jeśli przecina się z linią wiersza"""
