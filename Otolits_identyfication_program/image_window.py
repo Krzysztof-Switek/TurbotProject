@@ -69,12 +69,17 @@ class ImageWindow:
         if hasattr(self.input_handler, 'row_detector'):
             self.input_handler.row_detector.draw_rows(display_image)
 
-        # Ramki wycinków A (niebieski) i B (fioletowy) — pochodne z boxów + margines.
-        compartment_bboxes = {}
+        # Etykiety wierszy + bbox-y wycinków — jedno wywołanie compute_row_labels.
+        row_labels: dict = {}
+        label_err = None
+        compartment_bboxes: dict = {}
         if hasattr(self.input_handler, 'row_detector'):
-            compartment_bboxes = compute_compartment_bboxes(
-                self.input_handler.row_detector.rows
-            )
+            rows = self.input_handler.row_detector.rows
+            row_labels, label_err = compute_row_labels(rows)
+            if label_err is None:
+                compartment_bboxes = compute_compartment_bboxes(rows, labels=row_labels)
+
+        # Ramki wycinków A (niebieski) i B (fioletowy).
         compartment_colors = {'A': (255, 0, 0), 'B': (200, 0, 200)}  # BGR
         for label, (x1, y1, x2, y2) in compartment_bboxes.items():
             cv2.rectangle(
@@ -91,19 +96,14 @@ class ImageWindow:
         mode_info = self.input_handler.get_mode_info()
         draw.text((10, 10), mode_info, font=self.font, fill=(255, 255, 255))
 
-        # Statusbar: liczba wierszy w wycinku A i B (pochodne z compute_row_labels).
-        if hasattr(self.input_handler, 'row_detector'):
-            row_labels_for_count, _ = compute_row_labels(
-                self.input_handler.row_detector.rows
-            )
-            counts = {'A': 0, 'B': 0}
-            for label_str in row_labels_for_count.values():
-                counts[label_str[0]] += 1
-            status_text = f"Wycinek A: {counts['A']} wierszy | Wycinek B: {counts['B']} wierszy"
-            draw.text((10, 32), status_text, font=self.font, fill=(255, 255, 255))
+        # Statusbar: liczniki wierszy w wycinku A i B.
+        counts = {'A': 0, 'B': 0}
+        for label_str in row_labels.values():
+            counts[label_str[0]] += 1
+        status_text = f"Wycinek A: {counts['A']} wierszy | Wycinek B: {counts['B']} wierszy"
+        draw.text((10, 32), status_text, font=self.font, fill=(255, 255, 255))
 
         # Etykieta wycinka ("A"/"B") w lewym górnym rogu jego ramki.
-        # Kolor RGB (PIL) odpowiadający kolorom ramek BGR z cv2.rectangle.
         compartment_text_colors = {'A': (0, 0, 255), 'B': (200, 0, 200)}
         for label, (x1, y1, _, _) in compartment_bboxes.items():
             draw.text(
@@ -115,32 +115,28 @@ class ImageWindow:
             )
 
         # Etykiety wierszy (A_1, B_3, ...) przy lewym końcu linii.
-        if hasattr(self.input_handler, 'row_detector'):
-            row_labels, label_err = compute_row_labels(
-                self.input_handler.row_detector.rows
+        if label_err:
+            draw.text(
+                (10, pil_image.height - 50),
+                label_err,
+                font=self.font,
+                fill=(255, 80, 80),
+                stroke_width=2, stroke_fill=(0, 0, 0),
             )
-            if label_err:
+        elif hasattr(self.input_handler, 'row_detector'):
+            for row in self.input_handler.row_detector.rows:
+                label = row_labels.get(id(row))
+                if not label:
+                    continue
+                x = int(row.line.p1[0]) + 8
+                y = int(row.line.p1[1]) - 20
                 draw.text(
-                    (10, pil_image.height - 50),
-                    label_err,
+                    (x, y),
+                    label,
                     font=self.font,
-                    fill=(255, 80, 80),
+                    fill=(255, 255, 255),
                     stroke_width=2, stroke_fill=(0, 0, 0),
                 )
-            else:
-                for row in self.input_handler.row_detector.rows:
-                    label = row_labels.get(id(row))
-                    if not label:
-                        continue
-                    x = int(row.line.p1[0]) + 8
-                    y = int(row.line.p1[1]) - 20
-                    draw.text(
-                        (x, y),
-                        label,
-                        font=self.font,
-                        fill=(255, 255, 255),
-                        stroke_width=2, stroke_fill=(0, 0, 0),
-                    )
 
         y_pos = pil_image.height - 30
         font_small = self.font.font_variant(size=12)

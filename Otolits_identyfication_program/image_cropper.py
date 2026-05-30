@@ -54,16 +54,24 @@ def compute_row_labels(rows) -> Tuple[Dict[int, str], Optional[str]]:
     return labels, None
 
 
-def compute_compartment_bboxes(rows, margin: int = 40) -> Dict[str, Tuple[float, float, float, float]]:
+def compute_compartment_bboxes(
+    rows,
+    margin: int = 40,
+    labels: Optional[Dict[int, str]] = None,
+) -> Dict[str, Tuple[float, float, float, float]]:
     """Wyznacza bbox każdego wycinka jako bounding-box wszystkich boxów w jego
     wierszach + margines (w pikselach przestrzeni podglądu).
 
     Zwraca {'A': (x1, y1, x2, y2), 'B': (x1, y1, x2, y2)}. Wycinki bez wierszy
     pomijane. Gdy compute_row_labels zwraca błąd walidacji, zwracamy {}.
+
+    Parametr `labels` pozwala przekazać już obliczone etykiety i uniknąć
+    powtórnego wywołania compute_row_labels (perf optimization w UI).
     """
-    labels, err = compute_row_labels(rows)
-    if err is not None:
-        return {}
+    if labels is None:
+        labels, err = compute_row_labels(rows)
+        if err is not None:
+            return {}
 
     by_compartment: Dict[str, list] = {'A': [], 'B': []}
     for row in rows:
