@@ -18,6 +18,7 @@ class ManualMode(Enum):
     DELETE = auto()
     MOVE = auto()
     RESIZE = auto()
+    EDIT_LABEL = auto()
 
 
 @dataclass
@@ -45,6 +46,7 @@ class InputHandler:
             ord('d'): lambda: self._set_manual_mode(ManualMode.DELETE),
             ord('v'): lambda: self._set_manual_mode(ManualMode.MOVE),
             ord('r'): lambda: self._set_manual_mode(ManualMode.RESIZE),
+            ord('e'): lambda: self._set_manual_mode(ManualMode.EDIT_LABEL),
             27: self._reset_selection
         }
 
@@ -56,7 +58,8 @@ class InputHandler:
                 ManualMode.ADD_LINE: "Dodawanie linii",
                 ManualMode.DELETE: "Usuwanie",
                 ManualMode.MOVE: "Przesuwanie",
-                ManualMode.RESIZE: "Zmiana rozmiaru"
+                ManualMode.RESIZE: "Zmiana rozmiaru",
+                ManualMode.EDIT_LABEL: "Edycja etykiety wiersza"
             }
             mode_info += f" | {mode_names[self.manual_mode]}"
         return mode_info
@@ -72,6 +75,7 @@ class InputHandler:
             "d": "Usuń",
             "v": "Przesuń",
             "r": "Zmień rozmiar",
+            "e": "Edytuj etykietę",
             "Esc": "Anuluj"
         }
 
@@ -133,6 +137,11 @@ class InputHandler:
                 dist_p2 = hypot(x - line.p2[0], y - line.p2[1])
                 self.selection.element = line
                 self.selection.corner_idx = 'p1' if dist_p1 < dist_p2 else 'p2'
+        elif self.manual_mode == ManualMode.EDIT_LABEL:
+            if line := self.row_detector.get_line_at(x, y):
+                self._edit_row_label(line)
+            self.selection.is_drawing = False
+            return True
 
         self.selection.drag_start = (x, y)
         return True
@@ -241,3 +250,37 @@ class InputHandler:
                 row.boxes.append(box)
 
         row.boxes.sort(key=lambda b: b.x1 + b.width() / 2)
+
+    def _edit_row_label(self, line: RowLine) -> None:
+        """Otwiera tkinter prompt z wyborem A/B/auto i ustawia override w Row."""
+        row = next((r for r in self.row_detector.rows if r.line is line), None)
+        if row is None:
+            return
+
+        import tkinter as tk
+        from tkinter import simpledialog
+
+        current = row.compartment_override or "auto"
+        root = tk.Tk()
+        root.withdraw()
+        try:
+            choice = simpledialog.askstring(
+                "Etykieta wiersza",
+                "Wycinek (A / B / auto):",
+                initialvalue=current,
+                parent=root,
+            )
+        finally:
+            root.destroy()
+
+        if choice is None:
+            return  # user kliknął Cancel
+        value = choice.strip().upper()
+        if value in ("A", "B"):
+            row.compartment_override = value
+            print(f"Wiersz: override -> {value}")
+        elif value in ("AUTO", ""):
+            row.compartment_override = None
+            print("Wiersz: override -> auto (geometria)")
+        else:
+            print(f"Nieprawidłowa wartość '{choice}'. Dozwolone: A, B, auto.")
