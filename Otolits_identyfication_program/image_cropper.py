@@ -54,6 +54,38 @@ def compute_row_labels(rows) -> Tuple[Dict[int, str], Optional[str]]:
     return labels, None
 
 
+def compute_compartment_bboxes(rows, margin: int = 40) -> Dict[str, Tuple[float, float, float, float]]:
+    """Wyznacza bbox każdego wycinka jako bounding-box wszystkich boxów w jego
+    wierszach + margines (w pikselach przestrzeni podglądu).
+
+    Zwraca {'A': (x1, y1, x2, y2), 'B': (x1, y1, x2, y2)}. Wycinki bez wierszy
+    pomijane. Gdy compute_row_labels zwraca błąd walidacji, zwracamy {}.
+    """
+    labels, err = compute_row_labels(rows)
+    if err is not None:
+        return {}
+
+    by_compartment: Dict[str, list] = {'A': [], 'B': []}
+    for row in rows:
+        if not getattr(row, 'boxes', None):
+            continue
+        label = labels.get(id(row))
+        if not label:
+            continue
+        by_compartment[label[0]].extend(row.boxes)
+
+    result: Dict[str, Tuple[float, float, float, float]] = {}
+    for label, boxes in by_compartment.items():
+        if not boxes:
+            continue
+        x1 = min(b.x1 for b in boxes) - margin
+        y1 = min(b.y1 for b in boxes) - margin
+        x2 = max(b.x2 for b in boxes) + margin
+        y2 = max(b.y2 for b in boxes) + margin
+        result[label] = (x1, y1, x2, y2)
+    return result
+
+
 def _split_compartments(sorted_rows):
     """Podział wierszy na wycinek A (górny) i B (dolny).
 
