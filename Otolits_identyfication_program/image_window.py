@@ -197,6 +197,11 @@ class ImageWindow:
                 self.mark_dirty()
         except (ValueError, TypeError):
             print(f"Błędne współrzędne myszy: {x}, {y}")
+        except Exception as e:
+            # Każdy inny błąd MUSI być widoczny w konsoli — cv2 mouse callback
+            # silently swallowuje wyjątki, a my potrzebujemy diagnostyki.
+            print(f"BŁĄD mouse callback: {type(e).__name__}: {e}")
+            traceback.print_exc()
 
     def _handle_next_image(self):
         self._release_resources()
