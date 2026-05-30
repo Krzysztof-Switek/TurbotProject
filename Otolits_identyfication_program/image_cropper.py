@@ -41,9 +41,7 @@ class ImageCropper:
         # Sort rows from top to bottom
         sorted_rows = sorted(rows, key=lambda row: min(b.y1 for b in row.boxes))
 
-        # Walidacja: max 6 wierszy łącznie (po 3 na wycinek A i B). Przekroczenie
-        # oznacza błędne wykrycie wierszy — blokujemy zapis żeby nie generować
-        # śmieciowych nazw plików (B_4, B_5, ...).
+        # Walidacja globalna: max 6 wierszy łącznie (po 3 na wycinek A i B).
         total = len(sorted_rows)
         if total > 6:
             print(
@@ -52,65 +50,97 @@ class ImageCropper:
             )
             return []
 
-        # Liczność wycinków A (max 3 pierwsze globalnie) i B (max 3 kolejne)
-        n_a = min(total, 3)
-        n_b = max(0, min(total - 3, 3))
+        # Podział wierszy na wycinek A (górny) i B (dolny) przez największą lukę Y.
+        a_rows, b_rows = self._split_compartments(sorted_rows)
+        n_a = len(a_rows)
+        n_b = len(b_rows)
 
-        for absolute_row_idx, row in enumerate(sorted_rows, start=1):
-            # Numerowanie "od dołu" w obrębie wycinka: najniższy wiersz = _3,
-            # każdy kolejny w górę numer o 1 mniejszy.
-            if absolute_row_idx <= 3:  # Wycinek A
-                offset = absolute_row_idx - 1          # 0..n_a-1
-                row_num = 3 - (n_a - 1 - offset)
-                prefix = f"A_{row_num}"
+        # Walidacja per wycinek: max 3 wiersze w każdym.
+        if n_a > 3 or n_b > 3:
+            print(
+                f"BŁĄD: wycinek A ma {n_a} wierszy, wycinek B ma {n_b} wierszy "
+                f"(max 3 na wycinek). Anuluję zapis. Popraw wiersze ręcznie."
+            )
+            return []
+
+        # Iteracja per wycinek; numerowanie "od dołu" w obrębie wycinka:
+        # najniższy wiersz = _3, każdy w górę = numer o 1 mniejszy.
+        absolute_row_idx = 0
+        for label, rows_in_c in (('A', a_rows), ('B', b_rows)):
+            n = len(rows_in_c)
+            for offset, row in enumerate(rows_in_c):
+                absolute_row_idx += 1
+                row_num = 3 - (n - 1 - offset)
+                prefix = f"{label}_{row_num}"
                 display_row_num = row_num
-            elif absolute_row_idx <= 6:  # Wycinek B
-                offset = absolute_row_idx - 4          # 0..n_b-1
-                row_num = 3 - (n_b - 1 - offset)
-                prefix = f"B_{row_num}"
-                display_row_num = row_num
-            else:  # >6 wierszy — anomalia, zachowujemy obecne zachowanie B_4, B_5...
-                prefix = f"B_{absolute_row_idx - 3}"
-                display_row_num = absolute_row_idx - 3
 
-            # Sort boxes left to right
-            sorted_boxes = sorted(row.boxes, key=lambda b: (b.x1 + b.x2) / 2)
+                # Sort boxes left to right
+                sorted_boxes = sorted(row.boxes, key=lambda b: (b.x1 + b.x2) / 2)
 
-            for box_idx, box in enumerate(sorted_boxes, start=1):
-                # Original cropping logic remains unchanged
-                if self.image_loader:
-                    x1, y1, x2, y2 = self.image_loader.scale_coords_to_original(box.x1, box.y1, box.x2, box.y2)
-                else:
-                    x1, y1, x2, y2 = box.x1, box.y1, box.x2, box.y2
+                for box_idx, box in enumerate(sorted_boxes, start=1):
+                    # Original cropping logic remains unchanged
+                    if self.image_loader:
+                        x1, y1, x2, y2 = self.image_loader.scale_coords_to_original(box.x1, box.y1, box.x2, box.y2)
+                    else:
+                        x1, y1, x2, y2 = box.x1, box.y1, box.x2, box.y2
 
-                h, w = original_image.shape[:2]
-                x1, x2 = sorted([max(0, min(w, x1)), max(0, min(w, x2))])
-                y1, y2 = sorted([max(0, min(h, y1)), max(0, min(h, y2))])
+                    h, w = original_image.shape[:2]
+                    x1, x2 = sorted([max(0, min(w, x1)), max(0, min(w, x2))])
+                    y1, y2 = sorted([max(0, min(h, y1)), max(0, min(h, y2))])
 
-                if x1 >= x2 or y1 >= y2:
-                    continue
-
-                try:
-                    cropped = original_image[y1:y2, x1:x2].copy()
-                    if cropped.size == 0:
+                    if x1 >= x2 or y1 >= y2:
                         continue
 
-                    # New filename format
-                    filename = f"{original_filename}{prefix}_{box_idx}.png"
-                    filepath = os.path.join(self.output_dir, filename)
-                    cv2.imwrite(filepath, cropped)
+                    try:
+                        cropped = original_image[y1:y2, x1:x2].copy()
+                        if cropped.size == 0:
+                            continue
 
-                    results.append(CropResult(
-                        image=cropped,
-                        box_index=box_idx,
-                        row_index=absolute_row_idx,  # Absolute position preserved
-                        original_coords=(x1, y1, x2, y2),
-                        filename=filename
-                    ))
-                except Exception as e:
-                    print(f"Błąd podczas wycinania boxu: {e}")
+                        # New filename format
+                        filename = f"{original_filename}{prefix}_{box_idx}.png"
+                        filepath = os.path.join(self.output_dir, filename)
+                        cv2.imwrite(filepath, cropped)
+
+                        results.append(CropResult(
+                            image=cropped,
+                            box_index=box_idx,
+                            row_index=absolute_row_idx,  # Absolute position preserved
+                            original_coords=(x1, y1, x2, y2),
+                            filename=filename
+                        ))
+                    except Exception as e:
+                        print(f"Błąd podczas wycinania boxu: {e}")
 
         return results
+
+    def _split_compartments(self, sorted_rows):
+        """Podział wierszy na wycinek A (górny) i B (dolny) przez największą lukę Y.
+
+        sorted_rows musi być już posortowane top→bottom. Dla 0 wierszy zwraca
+        ([], []), dla 1 wiersza — wszystko do A. Dla 2+ wierszy znajduje
+        największą pionową lukę między centroidami wierszy i tam dzieli.
+
+        Brak heurystyki "is large enough" — zawsze split przez największą lukę.
+        Manualny override przyjdzie z UI w późniejszych iteracjach.
+        """
+        n = len(sorted_rows)
+        if n == 0:
+            return [], []
+        if n == 1:
+            return list(sorted_rows), []
+
+        # Centroid Y każdego wiersza = średnia Y środków boxów w wierszu.
+        centroids = [
+            sum((b.y1 + b.y2) / 2 for b in row.boxes) / len(row.boxes)
+            for row in sorted_rows
+        ]
+        # Największa luka między kolejnymi centroidami → indeks po którym dzielimy.
+        gaps = [(centroids[i + 1] - centroids[i], i) for i in range(n - 1)]
+        _, split_idx = max(gaps)
+
+        a_rows = list(sorted_rows[:split_idx + 1])
+        b_rows = list(sorted_rows[split_idx + 1:])
+        return a_rows, b_rows
 
     def process_cropping(self, bbox_manager: 'BoundingBoxManager', input_handler: 'InputHandler'):
         """ Handles cropping boxes and saving them to disk """
