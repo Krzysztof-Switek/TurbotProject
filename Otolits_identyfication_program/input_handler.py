@@ -139,7 +139,10 @@ class InputHandler:
                 self.selection.element = line
                 self.selection.corner_idx = 'p1' if dist_p1 < dist_p2 else 'p2'
         elif self.manual_mode == ManualMode.EDIT_LABEL:
-            if line := self.row_detector.get_line_at(x, y):
+            line = self.row_detector.get_line_at(x, y)
+            if line is None:
+                print(f"EDIT_LABEL: klik ({x}, {y}) nie trafia w żadną linię (tolerancja 10 px).")
+            else:
                 self._edit_row_label(line)
             self.selection.is_drawing = False
             return True
@@ -253,88 +256,49 @@ class InputHandler:
         row.boxes.sort(key=lambda b: b.x1 + b.width() / 2)
 
     def _edit_row_label(self, line: RowLine) -> None:
-        """Otwiera tkinter popup z dropdownem A/B/auto i ustawia override w Row."""
+        """Otwiera tkinter prompt 'A' / 'B' / 'auto' i ustawia override w Row."""
         row = next((r for r in self.row_detector.rows if r.line is line), None)
         if row is None:
+            print("Klik nie trafia w żaden wiersz.")
             return
 
         choice = self._prompt_compartment_choice(row.compartment_override)
         if choice is None:
             return  # user kliknął Cancel
-        if choice in ("A", "B"):
+        value = choice.strip().upper()
+        if value in ("A", "B"):
             old_override = row.compartment_override
-            row.compartment_override = choice
+            row.compartment_override = value
             _, err = compute_row_labels(self.row_detector.rows)
             if err:
                 row.compartment_override = old_override
-                print(f"Nie można ustawić override='{choice}': {err}")
+                print(f"Nie można ustawić override='{value}': {err}")
                 return
-            print(f"Wiersz: override -> {choice}")
-        else:  # "auto"
+            print(f"Wiersz: override -> {value}")
+        elif value in ("AUTO", ""):
             row.compartment_override = None
             print("Wiersz: override -> auto (geometria)")
+        else:
+            print(f"Nieprawidłowa wartość '{choice}'. Dozwolone: A, B, auto.")
 
     @staticmethod
     def _prompt_compartment_choice(current: Optional[str]) -> Optional[str]:
-        """Modalny popup z Combobox A/B/auto. Zwraca wybór lub None (Cancel).
+        """Prompt tkinter z 'A' / 'B' / 'auto'. Zwraca wybór lub None (Cancel).
 
-        Używa współdzielonego Tk root (image_loader.get_tk_root) +
-        Toplevel z wait_window, żeby uniknąć cold-startu drugiego Tk().
-
-        Po destroy Toplevel pumpujemy pending eventy tkinter
-        (update_idletasks + update) żeby cv2 odzyskało focus.
+        Używa simpledialog.askstring z parent=shared Tk root.
+        simpledialog.Dialog wewnętrznie wywołuje deiconify → wait_visibility
+        → grab_set → wait_window w poprawnej kolejności i działa z
+        withdrawn parentem (custom Toplevel z transient() na withdrawn
+        root powodował 'ghost window' na Windows).
         """
-        import tkinter as tk
-        from tkinter import ttk
+        from tkinter import simpledialog
         from image_loader import get_tk_root
 
         root = get_tk_root()
-        win = tk.Toplevel(root)
-        win.title("Etykieta wiersza")
-        win.resizable(False, False)
-        win.transient(root)
-
-        result: list = [None]
-
-        ttk.Label(win, text="Wycinek:").grid(row=0, column=0, padx=10, pady=10, sticky="w")
-        var = tk.StringVar(value=current or "auto")
-        combo = ttk.Combobox(
-            win,
-            textvariable=var,
-            values=["A", "B", "auto"],
-            state="readonly",
-            width=10,
+        choice = simpledialog.askstring(
+            "Etykieta wiersza",
+            "Wycinek (A / B / auto):",
+            initialvalue=current or "auto",
+            parent=root,
         )
-        combo.grid(row=0, column=1, padx=10, pady=10)
-        combo.focus_set()
-
-        def on_ok():
-            result[0] = var.get()
-            win.destroy()
-
-        def on_cancel():
-            win.destroy()
-
-        btn_frame = ttk.Frame(win)
-        btn_frame.grid(row=1, column=0, columnspan=2, pady=(0, 10))
-        ttk.Button(btn_frame, text="OK", command=on_ok).grid(row=0, column=0, padx=5)
-        ttk.Button(btn_frame, text="Anuluj", command=on_cancel).grid(row=0, column=1, padx=5)
-
-        win.bind("<Return>", lambda _e: on_ok())
-        win.bind("<Escape>", lambda _e: on_cancel())
-
-        # Modalne, ale wait_window zamiast grab_set+mainloop -
-        # mniej ryzyka zostawienia fokusu na ukrytym root po destroy.
-        win.lift()
-        win.focus_force()
-        win.wait_window()
-
-        # Pumpuj pending tkinter eventy (oddaj kontrolę) zanim cv2
-        # przejmie z powrotem - inaczej cv2 może gubić klawisze.
-        try:
-            root.update_idletasks()
-            root.update()
-        except tk.TclError:
-            pass
-
-        return result[0]
+        return choice
