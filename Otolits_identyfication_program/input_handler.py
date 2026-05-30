@@ -4,6 +4,7 @@ from typing import Optional, Tuple, Union
 from dataclasses import dataclass
 from row_detector import RowLine
 from bounding_box import BoundingBox
+from image_cropper import compute_row_labels
 from math import hypot
 
 
@@ -277,7 +278,13 @@ class InputHandler:
             return  # user kliknął Cancel
         value = choice.strip().upper()
         if value in ("A", "B"):
+            old_override = row.compartment_override
             row.compartment_override = value
+            _, err = compute_row_labels(self.row_detector.rows)
+            if err:
+                row.compartment_override = old_override
+                print(f"Nie można ustawić override='{value}': {err}")
+                return
             print(f"Wiersz: override -> {value}")
         elif value in ("AUTO", ""):
             row.compartment_override = None
