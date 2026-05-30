@@ -162,6 +162,10 @@ class ImageWindow:
             self.mark_dirty()
 
             while True:
+                # Render co iterację: prosty, niezawodny model. Aplikacja idle
+                # generuje stały frame rate, ale dzięki temu żadna ścieżka stanu
+                # nie potrzebuje pamiętać o wywołaniu mark_dirty.
+                self.mark_dirty()
                 self.update_display()
 
                 key = cv2.waitKey(1)
@@ -179,9 +183,7 @@ class ImageWindow:
 
                     # Konwersja na małą literę
                     key_char = chr(key).lower()
-
-                    if self.input_handler.keyboard_callback(ord(key_char)):
-                        self.mark_dirty()
+                    self.input_handler.keyboard_callback(ord(key_char))
 
         finally:
             self._cleanup()
