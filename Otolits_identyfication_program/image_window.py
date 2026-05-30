@@ -166,7 +166,6 @@ class ImageWindow:
             self.mark_dirty()
 
             while True:
-                self.mark_dirty()
                 self.update_display()
 
                 key = cv2.waitKey(1)
