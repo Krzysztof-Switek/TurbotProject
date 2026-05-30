@@ -225,10 +225,12 @@ class ImageCropper:
                 print("Nie można załadować oryginalnego obrazu")
                 return
 
+            rows = input_handler.row_detector.rows if hasattr(input_handler, 'row_detector') else []
+
             print("Rozpoczynanie procesu wycinania boxów...")
             results = self.crop_and_save(
                 original_image,
-                input_handler.row_detector.rows if hasattr(input_handler, 'row_detector') else [],
+                rows,
                 bbox_manager.boxes
             )
 
@@ -237,8 +239,66 @@ class ImageCropper:
                 for result in results:
                     print(f"- {result.filename}")
                 print(f"Pliki zapisano w: {os.path.abspath(self.output_dir)}\n")
+
+                # Zapis adnotacji wycinków w formacie YOLO obok zdjęcia
+                # źródłowego (active learning loop dla przyszłego treningu).
+                self._save_compartment_annotations(original_image, rows)
             else:
                 print("Nie udało się wyciąć żadnych boxów")
 
         except Exception as e:
             print(f"Image_cropper - Błąd podczas wycinania boxów: {str(e)}")
+
+    def _save_compartment_annotations(self, original_image: np.ndarray, rows) -> None:
+        """Zapisuje bbox-y wycinków A/B w formacie YOLO obok zdjęcia źródłowego.
+
+        Format: `0 cx cy w h` znormalizowane do wymiarów oryginalnego obrazu,
+        jedna linia per wycinek. Klasa 0 = "compartment". Plik `.txt` lądą
+        w katalogu zdjęcia źródłowego (np. `test_images/<img>.txt`).
+        """
+        bboxes_preview = compute_compartment_bboxes(rows)
+        if not bboxes_preview:
+            return
+
+        image_path = self.image_loader.current_image_path if self.image_loader else None
+        if not image_path:
+            return
+
+        h, w = original_image.shape[:2]
+        annotation_path = os.path.splitext(image_path)[0] + ".txt"
+
+        lines = []
+        for label in ('A', 'B'):
+            if label not in bboxes_preview:
+                continue
+            x1_p, y1_p, x2_p, y2_p = bboxes_preview[label]
+            if self.image_loader:
+                x1, y1, x2, y2 = self.image_loader.scale_coords_to_original(
+                    x1_p, y1_p, x2_p, y2_p
+                )
+            else:
+                x1, y1, x2, y2 = x1_p, y1_p, x2_p, y2_p
+
+            # Clip do granic obrazu (compartment z marginesem może wyjść poza)
+            x1 = max(0, min(w, x1))
+            y1 = max(0, min(h, y1))
+            x2 = max(0, min(w, x2))
+            y2 = max(0, min(h, y2))
+            if x2 <= x1 or y2 <= y1:
+                continue
+
+            cx = (x1 + x2) / 2 / w
+            cy = (y1 + y2) / 2 / h
+            bw = (x2 - x1) / w
+            bh = (y2 - y1) / h
+            lines.append(f"0 {cx:.6f} {cy:.6f} {bw:.6f} {bh:.6f}")
+
+        if not lines:
+            return
+
+        try:
+            with open(annotation_path, 'w') as f:
+                f.write("\n".join(lines) + "\n")
+            print(f"Zapisano adnotacje YOLO: {annotation_path}")
+        except OSError as e:
+            print(f"Nie udało się zapisać adnotacji {annotation_path}: {e}")
