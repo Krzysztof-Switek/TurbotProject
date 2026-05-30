@@ -91,6 +91,17 @@ class ImageWindow:
         mode_info = self.input_handler.get_mode_info()
         draw.text((10, 10), mode_info, font=self.font, fill=(255, 255, 255))
 
+        # Statusbar: liczba wierszy w wycinku A i B (pochodne z compute_row_labels).
+        if hasattr(self.input_handler, 'row_detector'):
+            row_labels_for_count, _ = compute_row_labels(
+                self.input_handler.row_detector.rows
+            )
+            counts = {'A': 0, 'B': 0}
+            for label_str in row_labels_for_count.values():
+                counts[label_str[0]] += 1
+            status_text = f"Wycinek A: {counts['A']} wierszy | Wycinek B: {counts['B']} wierszy"
+            draw.text((10, 32), status_text, font=self.font, fill=(255, 255, 255))
+
         # Etykieta wycinka ("A"/"B") w lewym górnym rogu jego ramki.
         # Kolor RGB (PIL) odpowiadający kolorom ramek BGR z cv2.rectangle.
         compartment_text_colors = {'A': (0, 0, 255), 'B': (200, 0, 200)}
