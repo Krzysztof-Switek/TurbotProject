@@ -2,7 +2,7 @@ import cv2
 import gc
 import traceback
 from row_detector import RowDetector
-from image_cropper import ImageCropper, compute_row_labels
+from image_cropper import ImageCropper, compute_row_labels, compute_compartment_bboxes
 from input_handler import WorkMode, ManualMode
 from PIL import Image, ImageDraw, ImageFont
 import numpy as np
@@ -69,11 +69,39 @@ class ImageWindow:
         if hasattr(self.input_handler, 'row_detector'):
             self.input_handler.row_detector.draw_rows(display_image)
 
+        # Ramki wycinków A (niebieski) i B (fioletowy) — pochodne z boxów + margines.
+        compartment_bboxes = {}
+        if hasattr(self.input_handler, 'row_detector'):
+            compartment_bboxes = compute_compartment_bboxes(
+                self.input_handler.row_detector.rows
+            )
+        compartment_colors = {'A': (255, 0, 0), 'B': (200, 0, 200)}  # BGR
+        for label, (x1, y1, x2, y2) in compartment_bboxes.items():
+            cv2.rectangle(
+                display_image,
+                (int(x1), int(y1)),
+                (int(x2), int(y2)),
+                compartment_colors[label],
+                2,
+            )
+
         pil_image = Image.fromarray(cv2.cvtColor(display_image, cv2.COLOR_BGR2RGB))
         draw = ImageDraw.Draw(pil_image)
 
         mode_info = self.input_handler.get_mode_info()
         draw.text((10, 10), mode_info, font=self.font, fill=(255, 255, 255))
+
+        # Etykieta wycinka ("A"/"B") w lewym górnym rogu jego ramki.
+        # Kolor RGB (PIL) odpowiadający kolorom ramek BGR z cv2.rectangle.
+        compartment_text_colors = {'A': (0, 0, 255), 'B': (200, 0, 200)}
+        for label, (x1, y1, _, _) in compartment_bboxes.items():
+            draw.text(
+                (int(x1) + 4, int(y1) + 2),
+                label,
+                font=self.font,
+                fill=compartment_text_colors[label],
+                stroke_width=2, stroke_fill=(255, 255, 255),
+            )
 
         # Etykiety wierszy (A_1, B_3, ...) przy lewym końcu linii.
         if hasattr(self.input_handler, 'row_detector'):
