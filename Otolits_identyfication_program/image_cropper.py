@@ -41,8 +41,18 @@ class ImageCropper:
         # Sort rows from top to bottom
         sorted_rows = sorted(rows, key=lambda row: min(b.y1 for b in row.boxes))
 
-        # Liczność wycinków A (max 3 pierwsze globalnie) i B (max 3 kolejne)
+        # Walidacja: max 6 wierszy łącznie (po 3 na wycinek A i B). Przekroczenie
+        # oznacza błędne wykrycie wierszy — blokujemy zapis żeby nie generować
+        # śmieciowych nazw plików (B_4, B_5, ...).
         total = len(sorted_rows)
+        if total > 6:
+            print(
+                f"BŁĄD: wykryto {total} wierszy łącznie (max 6: po 3 na wycinek). "
+                f"Anuluję zapis. Popraw wiersze ręcznie (usuń nadmiarowe linie)."
+            )
+            return []
+
+        # Liczność wycinków A (max 3 pierwsze globalnie) i B (max 3 kolejne)
         n_a = min(total, 3)
         n_b = max(0, min(total - 3, 3))
 
