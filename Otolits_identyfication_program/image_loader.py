@@ -4,36 +4,19 @@ import numpy as np
 from typing import Optional, Tuple
 import exifread
 
-# Cache dla rozmiaru ekranu
-_SCREEN_SIZE = None
-# Singleton Tk root - jeden na sesję (tkinter źle znosi wiele Tk() w jednej apce).
-_TK_ROOT = None
-
-
-def get_tk_root():
-    """Singleton Tk root. Tworzy `Tk()` raz, withdraw'uje i trzyma jako parent
-    dla wszystkich popupów (Toplevel). Eliminuje cold-start drugiego Tk i
-    wielosekundowe opóźnienia otwierania dialogów.
-    """
-    global _TK_ROOT
-    if _TK_ROOT is None:
-        import tkinter as tk
-        _TK_ROOT = tk.Tk()
-        _TK_ROOT.withdraw()
-    return _TK_ROOT
-
-
-def get_screen_size() -> Tuple[int, int]:
-    """Pobiera rozmiar ekranu z cache'em (1× przy starcie)."""
-    global _SCREEN_SIZE
-    if _SCREEN_SIZE is None:
-        root = get_tk_root()
-        _SCREEN_SIZE = (root.winfo_screenwidth(), root.winfo_screenheight())
-    return _SCREEN_SIZE
-
 
 class ImageLoader:
-    def __init__(self, image_dir: str):
+    """Ładuje obrazy z katalogu (sekwencyjnie), skaluje do podglądu z limitem
+    `max_preview_px` (szer lub wys, w pikselach).
+
+    Używany przez:
+    - desktop (`main.py`, `image_window.py`) — sekwencyjna nawigacja przez `n`.
+    - web (`web/services/image_service.py`) — pojedynczy plik przez `from_path`.
+
+    Bez zależności GUI (tkinter usunięty) — działa w headless kontenerach Docker.
+    """
+
+    def __init__(self, image_dir: str, max_preview_px: int = 1920):
         if not os.path.isdir(image_dir):
             raise FileNotFoundError(f"Katalog '{image_dir}' nie istnieje")
 
@@ -45,9 +28,32 @@ class ImageLoader:
         self.current_index = 0
         self.image: Optional[np.ndarray] = None
         self.original_image: Optional[np.ndarray] = None
-        self.screen_width, self.screen_height = get_screen_size()
+        self.max_preview_px: int = max_preview_px
         self.scale: float = 1.0
         self.original_size: Tuple[int, int] = (0, 0)
+
+    @classmethod
+    def from_path(cls, image_path: str, max_preview_px: int = 1920) -> "ImageLoader":
+        """Tworzy ImageLoader skierowany na konkretny plik (web usecase).
+
+        Loader będzie miał tylko ten jeden plik jako `image_files[0]` i
+        `current_index=0`. Wywołaj `load_image()` żeby załadować.
+        """
+        directory = os.path.dirname(image_path) or "."
+        filename = os.path.basename(image_path)
+        if not os.path.isfile(image_path):
+            raise FileNotFoundError(f"Plik nie istnieje: {image_path}")
+
+        loader = cls.__new__(cls)
+        loader.image_dir = directory
+        loader.image_files = [filename]
+        loader.current_index = 0
+        loader.image = None
+        loader.original_image = None
+        loader.max_preview_px = max_preview_px
+        loader.scale = 1.0
+        loader.original_size = (0, 0)
+        return loader
 
     def load_image(self) -> Optional[np.ndarray]:
         """Ładuje obraz z pełną walidacją i obsługą błędów."""
@@ -77,7 +83,7 @@ class ImageLoader:
                 print(f"UWAGA: Duży obraz {w}x{h} (~{(w * h * 3) / 1024 / 1024:.1f}MB RAM)")
 
             # 4. Skalowanie
-            self.image = self._resize_to_screen(self.original_image)
+            self.image = self._resize_to_preview(self.original_image)
             return self.image
 
         except MemoryError:
@@ -92,19 +98,14 @@ class ImageLoader:
             return self.load_image()
         return None
 
-    def _resize_to_screen(self, image: np.ndarray) -> np.ndarray:
-        """Skaluje obraz do 90% ekranu z zachowaniem proporcji i obsługą orientacji EXIF.
+    def _resize_to_preview(self, image: np.ndarray) -> np.ndarray:
+        """Skaluje obraz do `max_preview_px` z zachowaniem proporcji i korektą orientacji EXIF.
 
         Args:
             image: Oryginalny obraz w formacie BGR (OpenCV)
 
         Returns:
-            Przeskalowany obraz z zachowaniem proporcji
-
-        Nowe funkcje:
-        - Automatyczna korekta orientacji EXIF dla JPEG
-        - Lepsza interpolacja dla zmniejszania/powiększania
-        - Ochrona przed dzieleniem przez zero
+            Przeskalowany obraz z zachowaniem proporcji (nie powiększa)
         """
         # 1. Korekta orientacji (tylko dla JPEG)
         if self.image_files[self.current_index].lower().endswith(('.jpg', '.jpeg')):
@@ -120,12 +121,9 @@ class ImageLoader:
         if w == 0 or h == 0:
             raise ValueError("Nieprawidłowe wymiary obrazu (szer/wys == 0)")
 
-        target_width = self.screen_width * 0.9
-        target_height = self.screen_height * 0.9
-
         self.scale = min(
-            target_width / w,
-            target_height / h,
+            self.max_preview_px / w,
+            self.max_preview_px / h,
             1.0  # Nie powiększamy
         )
         self.original_size = (w, h)
@@ -223,4 +221,3 @@ class ImageLoader:
         if 0 <= self.current_index < len(self.image_files):
             return os.path.join(self.image_dir, self.image_files[self.current_index])
         return None
-

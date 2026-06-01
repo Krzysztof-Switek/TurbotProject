@@ -292,9 +292,8 @@ class InputHandler:
         root powodował 'ghost window' na Windows).
         """
         from tkinter import simpledialog
-        from image_loader import get_tk_root
 
-        root = get_tk_root()
+        root = _get_tk_root()
         choice = simpledialog.askstring(
             "Etykieta wiersza",
             "Wycinek (A / B / auto):",
@@ -302,3 +301,21 @@ class InputHandler:
             parent=root,
         )
         return choice
+
+
+# Singleton Tk root dla desktop UI. Web nie ładuje tego pliku (input_handler
+# jest legacy desktop) — bezpiecznie tu, nie obciąża importu image_loader
+# w headless Docker.
+_TK_ROOT = None
+
+
+def _get_tk_root():
+    """Singleton Tk root używany przez dialogi desktop. Tworzy `Tk()` raz,
+    withdraw'uje i trzyma jako parent dla wszystkich popupów simpledialog.
+    """
+    global _TK_ROOT
+    if _TK_ROOT is None:
+        import tkinter as tk
+        _TK_ROOT = tk.Tk()
+        _TK_ROOT.withdraw()
+    return _TK_ROOT
