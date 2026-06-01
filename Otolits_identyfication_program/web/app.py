@@ -16,6 +16,7 @@ from fastapi.staticfiles import StaticFiles
 
 from auto_detector import AutoDetector
 from web import config
+from web.routers import calibration as calibration_router
 from web.routers import crop as crop_router
 from web.routers import detect as detect_router
 from web.routers import fs as fs_router
@@ -66,6 +67,7 @@ app.include_router(fs_router.router)
 app.include_router(image_router.router)
 app.include_router(detect_router.router)
 app.include_router(crop_router.router)
+app.include_router(calibration_router.router)
 
 # Statyczny frontend (HTML/JS/CSS). Mountowany na końcu żeby nie przejmować
 # ścieżek /api/*. `html=True` — index.html wyświetla się na "/".
