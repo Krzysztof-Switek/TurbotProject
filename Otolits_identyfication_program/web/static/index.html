@@ -1,0 +1,103 @@
+<!DOCTYPE html>
+<html lang="pl">
+<head>
+  <meta charset="UTF-8">
+  <title>Turbot — Otolith Annotation Tool</title>
+  <link rel="stylesheet" href="/style.css">
+</head>
+<body>
+  <div class="app">
+    <!-- Lewy panel: nawigacja katalogów + lista obrazów -->
+    <aside class="sidebar" id="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-header">
+          <span class="title">Źródło</span>
+          <button id="btn-refresh" title="Odśwież listę">↻</button>
+          <button id="btn-mkdir" title="Nowy katalog">📁</button>
+        </div>
+        <div class="breadcrumbs" id="breadcrumbs"></div>
+        <ul class="dirs" id="dirs"></ul>
+        <ul class="images" id="images"></ul>
+      </div>
+
+      <div class="sidebar-section">
+        <div class="sidebar-header">
+          <span class="title">Wyjście</span>
+        </div>
+        <div class="output-dir-row">
+          <span id="output-dir-current" class="output-dir-current">(nie wybrano)</span>
+          <button id="btn-set-output" title="Ustaw jako wyjście z bieżącego katalogu">tu</button>
+        </div>
+      </div>
+    </aside>
+
+    <!-- Centrum: canvas + status bar -->
+    <main class="main">
+      <div class="topbar">
+        <div class="modes" id="modes">
+          <button class="mode-btn" data-mode="ADD_BOX"  title="Dodaj box (b)">b · Box</button>
+          <button class="mode-btn" data-mode="ADD_LINE" title="Dodaj linię (l)">l · Linia</button>
+          <button class="mode-btn" data-mode="MOVE"     title="Przesuń (v)">v · Move</button>
+          <button class="mode-btn" data-mode="RESIZE"   title="Rozmiar (r)">r · Resize</button>
+          <button class="mode-btn" data-mode="DELETE"   title="Usuń (d)">d · Del</button>
+          <button class="mode-btn" data-mode="EDIT_LABEL" title="Edytuj etykietę (e)">e · Label</button>
+        </div>
+        <div class="actions">
+          <button id="btn-detect" disabled>Auto-detect (YOLO)</button>
+          <label class="checkbox">
+            <input type="checkbox" id="chk-save-annotations" checked>
+            Zapisuj adnotacje
+          </label>
+          <button id="btn-crop" disabled>Wytnij i zapisz (Enter)</button>
+        </div>
+      </div>
+
+      <div class="canvas-wrap" id="canvas-wrap">
+        <canvas id="canvas"></canvas>
+      </div>
+
+      <div class="statusbar" id="statusbar">
+        <span id="status-mode">Tryb: —</span>
+        <span id="status-file">Plik: —</span>
+        <span id="status-scale">Skala: —</span>
+        <span id="status-counts">Wycinek A: 0 wierszy | Wycinek B: 0 wierszy</span>
+        <span id="status-error" class="error"></span>
+      </div>
+    </main>
+  </div>
+
+  <!-- Modal: edycja etykiety wiersza (EDIT_LABEL) -->
+  <div class="modal-backdrop" id="modal-backdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
+      <h2 id="modal-title">Etykieta wiersza</h2>
+      <label for="modal-compartment">Wycinek:</label>
+      <select id="modal-compartment">
+        <option value="auto">auto (geometria)</option>
+        <option value="A">A</option>
+        <option value="B">B</option>
+      </select>
+      <p class="modal-error" id="modal-error" hidden></p>
+      <div class="modal-buttons">
+        <button id="modal-cancel">Anuluj (Esc)</button>
+        <button id="modal-ok" class="primary">OK (Enter)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: prompt mkdir -->
+  <div class="modal-backdrop" id="mkdir-backdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mkdir-title">
+      <h2 id="mkdir-title">Nowy katalog</h2>
+      <label for="mkdir-name">Nazwa:</label>
+      <input type="text" id="mkdir-name" placeholder="np. crops_2026_06_01">
+      <p class="modal-error" id="mkdir-error" hidden></p>
+      <div class="modal-buttons">
+        <button id="mkdir-cancel">Anuluj</button>
+        <button id="mkdir-ok" class="primary">Utwórz</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/app.js"></script>
+</body>
+</html>

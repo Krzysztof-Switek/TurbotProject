@@ -1,0 +1,228 @@
+/* ===== Globalne ===== */
+* { box-sizing: border-box; }
+html, body {
+  margin: 0;
+  padding: 0;
+  height: 100%;
+  font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif;
+  font-size: 14px;
+  background: #1e1e1e;
+  color: #e0e0e0;
+}
+button {
+  background: #2d2d2d;
+  color: #e0e0e0;
+  border: 1px solid #444;
+  padding: 4px 8px;
+  cursor: pointer;
+  font-size: 13px;
+  border-radius: 3px;
+}
+button:hover:not(:disabled) { background: #3a3a3a; }
+button:disabled { opacity: 0.4; cursor: not-allowed; }
+button.primary { background: #2266aa; border-color: #3388cc; }
+button.primary:hover:not(:disabled) { background: #3377bb; }
+button.active { background: #2266aa; border-color: #3388cc; }
+input[type="text"] {
+  background: #2d2d2d;
+  color: #e0e0e0;
+  border: 1px solid #444;
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-size: 13px;
+  width: 100%;
+}
+select {
+  background: #2d2d2d;
+  color: #e0e0e0;
+  border: 1px solid #444;
+  padding: 4px 8px;
+  border-radius: 3px;
+  font-size: 13px;
+}
+
+/* ===== Layout ===== */
+.app {
+  display: grid;
+  grid-template-columns: 280px 1fr;
+  height: 100vh;
+}
+
+/* ===== Sidebar ===== */
+.sidebar {
+  background: #252525;
+  border-right: 1px solid #333;
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+}
+.sidebar-section {
+  padding: 12px;
+  border-bottom: 1px solid #333;
+}
+.sidebar-header {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  margin-bottom: 8px;
+}
+.sidebar-header .title {
+  flex: 1;
+  font-weight: 600;
+  color: #aaa;
+  text-transform: uppercase;
+  font-size: 11px;
+  letter-spacing: 0.5px;
+}
+.breadcrumbs {
+  font-size: 12px;
+  color: #888;
+  margin-bottom: 6px;
+  word-break: break-all;
+}
+.breadcrumbs .crumb {
+  cursor: pointer;
+  color: #6699cc;
+}
+.breadcrumbs .crumb:hover { text-decoration: underline; }
+.breadcrumbs .sep { color: #555; margin: 0 4px; }
+
+.dirs, .images {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+}
+.dirs li, .images li {
+  padding: 4px 6px;
+  cursor: pointer;
+  border-radius: 3px;
+  font-size: 13px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.dirs li:hover, .images li:hover { background: #333; }
+.dirs li::before { content: "📁"; }
+.images li::before { content: "🖼"; }
+.images li.selected { background: #2266aa; }
+
+.output-dir-row {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+}
+.output-dir-current {
+  flex: 1;
+  font-size: 12px;
+  font-family: ui-monospace, monospace;
+  color: #ccc;
+  word-break: break-all;
+  background: #1e1e1e;
+  padding: 4px 6px;
+  border-radius: 3px;
+}
+
+/* ===== Main ===== */
+.main {
+  display: flex;
+  flex-direction: column;
+  overflow: hidden;
+}
+.topbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 8px 12px;
+  border-bottom: 1px solid #333;
+  background: #252525;
+}
+.modes {
+  display: flex;
+  gap: 4px;
+}
+.actions {
+  display: flex;
+  gap: 8px;
+  align-items: center;
+  margin-left: auto;
+}
+.checkbox {
+  display: flex;
+  align-items: center;
+  gap: 4px;
+  font-size: 13px;
+  color: #ccc;
+  cursor: pointer;
+}
+
+.canvas-wrap {
+  flex: 1;
+  overflow: auto;
+  background: #111;
+  position: relative;
+}
+canvas {
+  display: block;
+  /* Backend rozmiar = oryginal_dim * scale; CSS = native size, brak skalowania */
+}
+
+.statusbar {
+  display: flex;
+  align-items: center;
+  gap: 16px;
+  padding: 6px 12px;
+  border-top: 1px solid #333;
+  background: #252525;
+  font-size: 12px;
+  color: #aaa;
+}
+.statusbar .error {
+  color: #ff6666;
+  font-weight: 600;
+  margin-left: auto;
+}
+
+/* ===== Modal ===== */
+.modal-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.6);
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  z-index: 1000;
+}
+.modal-backdrop[hidden] { display: none; }
+.modal {
+  background: #2a2a2a;
+  border: 1px solid #444;
+  border-radius: 6px;
+  padding: 20px;
+  min-width: 320px;
+  box-shadow: 0 10px 40px rgba(0, 0, 0, 0.5);
+}
+.modal h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+  font-weight: 600;
+}
+.modal label {
+  display: block;
+  margin-bottom: 4px;
+  color: #aaa;
+  font-size: 12px;
+}
+.modal select, .modal input[type="text"] {
+  width: 100%;
+  margin-bottom: 12px;
+}
+.modal-error {
+  color: #ff6666;
+  font-size: 12px;
+  margin: 0 0 12px;
+}
+.modal-buttons {
+  display: flex;
+  justify-content: flex-end;
+  gap: 8px;
+}
