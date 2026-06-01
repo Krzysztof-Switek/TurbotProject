@@ -1100,6 +1100,61 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  // Modal EDIT_LABEL — dropdown A/B/auto z walidacją compute_row_labels.
+  // Wywoływany z ImageCanvas._onMouseDown gdy mode === EDIT_LABEL i klik na linię.
+  const openEditLabelModal = (row) => {
+    const $backdrop = document.getElementById("modal-backdrop");
+    const $select   = document.getElementById("modal-compartment");
+    const $error    = document.getElementById("modal-error");
+    const $ok       = document.getElementById("modal-ok");
+    const $cancel   = document.getElementById("modal-cancel");
+
+    $select.value = row.compartmentOverride ?? "auto";
+    $error.hidden = true;
+    $error.textContent = "";
+    $backdrop.hidden = false;
+    setTimeout(() => $select.focus(), 0);
+
+    const cleanup = () => {
+      $ok.removeEventListener("click", onOk);
+      $cancel.removeEventListener("click", onCancel);
+      document.removeEventListener("keydown", onKey);
+      $backdrop.hidden = true;
+    };
+
+    const onOk = () => {
+      const value = $select.value;
+      const newOverride = value === "auto" ? null : value;
+
+      // Walidacja: hipotetycznie ustaw, computeRowLabels musi przejść.
+      const oldOverride = row.compartmentOverride;
+      row.compartmentOverride = newOverride;
+      const { error } = computeRowLabels(imageCanvas.rows);
+      if (error !== null) {
+        row.compartmentOverride = oldOverride;
+        $error.textContent = error;
+        $error.hidden = false;
+        return; // nie zamykaj — user może zmienić wybór
+      }
+      cleanup();
+      imageCanvas.render();
+    };
+
+    const onCancel = () => { cleanup(); };
+
+    const onKey = (e) => {
+      if (e.key === "Enter")  { e.preventDefault(); onOk(); }
+      else if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+    };
+
+    $ok.addEventListener("click", onOk);
+    $cancel.addEventListener("click", onCancel);
+    document.addEventListener("keydown", onKey);
+  };
+
+  // Wpięcie do ImageCanvas (handler EDIT_LABEL używa optional chaining).
+  imageCanvas._openEditLabelModal = openEditLabelModal;
+
   // Klawiatura globalna
   document.addEventListener("keydown", (e) => {
     // Ignoruj gdy focus jest w input lub modal otwarty.
