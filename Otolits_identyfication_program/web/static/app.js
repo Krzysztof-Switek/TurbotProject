@@ -1107,18 +1107,35 @@ window.addEventListener("DOMContentLoaded", () => {
     }
   });
 
+  // Checkbox "Zapisuj adnotacje" — persystencja preferencji w localStorage.
+  const $chkSaveAnnotations = document.getElementById("chk-save-annotations");
+  const SAVE_ANNOTATIONS_KEY = "turbot.saveAnnotations";
+  // Wczytaj poprzednią wartość (default = true).
+  const savedPref = localStorage.getItem(SAVE_ANNOTATIONS_KEY);
+  if (savedPref !== null) {
+    $chkSaveAnnotations.checked = savedPref === "true";
+  }
+  $chkSaveAnnotations.addEventListener("change", () => {
+    localStorage.setItem(SAVE_ANNOTATIONS_KEY, String($chkSaveAnnotations.checked));
+  });
+
   // Crop button
   $btnCrop.addEventListener("click", async () => {
     const outputDir = fileBrowser.getOutputDir();
     if (outputDir === null || !imageCanvas.imagePath) return;
-    const saveAnnotations = document.getElementById("chk-save-annotations").checked;
+    const saveAnnotations = $chkSaveAnnotations.checked;
     const payload = imageCanvas.toCropPayload(outputDir, saveAnnotations);
     try {
       const res = await Api.crop(payload);
-      const annot = res.annotations_path ? `\nAdnotacje: ${res.annotations_path}` : "";
+      const annot = res.annotations_path
+        ? `\nAdnotacje YOLO: ${res.annotations_path}`
+        : saveAnnotations
+          ? "\n(adnotacje pominięte — brak bboxów wycinków)"
+          : "\n(zapis adnotacji wyłączony)";
       alert(
         `Zapisano ${res.saved.length} plików.\n` +
-        `Wycinek A: ${res.compartments.A}, B: ${res.compartments.B}${annot}`
+        `Wycinek A: ${res.compartments.A} wierszy, ` +
+        `B: ${res.compartments.B} wierszy${annot}`
       );
     } catch (e) {
       alert(`Crop: ${e.message}`);
