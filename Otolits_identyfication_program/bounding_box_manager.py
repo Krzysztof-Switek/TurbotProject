@@ -1,64 +1,87 @@
 import numpy as np
-import cv2
 from bounding_box import BoundingBox
+from typing import List, Optional
+import gc
 
 class BoundingBoxManager:
-    def __init__(self, image_shape):
-        self.boxes = []
+    def __init__(self):
+        self.boxes: List[BoundingBox] = []
+        self._boxes_cache = None  # Cache dla get_boxes()
 
-    def add_box(self, x1, y1, x2, y2, label=None):
-        new_box = BoundingBox(x1, y1, x2, y2, label)
+    # Podstawowe operacje CRUD
+    def add_box(self, x1_or_box, y1=None, x2=None, y2=None, label=None) -> BoundingBox:
+        """Dodaje nowy bounding box - akceptuje współrzędne lub obiekt BoundingBox"""
+        if isinstance(x1_or_box, BoundingBox):
+            new_box = x1_or_box
+        else:
+            if None in (y1, x2, y2):
+                raise ValueError("Należy podać wszystkie 4 współrzędne (x1, y1, x2, y2)")
+            new_box = BoundingBox(x1_or_box, y1, x2, y2, label)
+
         self.boxes.append(new_box)
-        print(f"Dodano box: ({x1},{y1})-({x2},{y2})")
-        print(f"Aktualna liczba boxów: {len(self.boxes)}")
+        self.invalidate_cache()
         return new_box
 
-    def remove_box(self, box):
-        if box in self.boxes:
+    def remove_box(self, box: BoundingBox) -> bool:
+        """Usuwa box i zwraca status operacji"""
+        try:
             self.boxes.remove(box)
-            print(f"Usunięto box: {box}")
-            print(f"Aktualna liczba boxów: {len(self.boxes)}")
-        else:
-            print("Błąd: Box nie istnieje")
+            self.invalidate_cache()
+            return True
+        except ValueError:
+            return False
 
-    def update_box(self, box, x1, y1, x2, y2):
+    def update_box(self, box: BoundingBox, x1: float, y1: float, x2: float, y2: float) -> None:
+        """Aktualizuje współrzędne istniejącego boxa"""
         if box not in self.boxes:
-            raise ValueError("Box nie istnieje w managerze")
-        box.update(x1, y1, x2, y2)
-        self.update_box_layer()
+            raise ValueError("Box nie jest zarządzany przez ten manager")
+        box.x1, box.y1, box.x2, box.y2 = x1, y1, x2, y2
+        box._invalidate_cache()
+        self.invalidate_cache()
 
-    def get_boxes(self):
-        return self.boxes.copy()  # Zwracamy kopię dla bezpieczeństwa
+    # Operacje zapytaniowe
+    def get_boxes(self) -> List[BoundingBox]:
+        """Zwraca cache'owaną kopię listy boxów"""
+        if self._boxes_cache is None:
+            self._boxes_cache = self.boxes.copy()
+        return self._boxes_cache
 
-    def get_box_at(self, x, y, tolerance=5):
-        for box in reversed(self.boxes):
+    def get_box_at(self, x: float, y: float, tolerance: float = 5.0) -> Optional[BoundingBox]:
+        """Znajduje box zawierający punkt (x,y) z tolerancją"""
+        if not isinstance(x, (int, float)) or not isinstance(y, (int, float)):
+            return None
+        for box in reversed(self.boxes):  # Sprawdzamy od najnowszych
             if box.contains(x, y, tolerance):
                 return box
         return None
 
-    def update_box_layer(self):
-        # Metoda może być pusta, ponieważ boxy są rysowane bezpośrednio
-        pass
+    # Operacje masowe
+    def clear_all(self) -> None:
+        """Usuwa wszystkie boxy z dodatkowym czyszczeniem zasobów"""
+        for box in self.boxes:
+            if hasattr(box, 'release'):  # Jeśli box ma metodę do zwalniania zasobów
+                box.release()
+        self.boxes.clear()
+        self.invalidate_cache()
+        gc.collect()
 
-    def get_box_layer(self):
-        # Zwraca pustą warstwę, ponieważ nie używamy już nakładania warstw
-        return np.zeros_like(self.box_layer)
-
-    def clear_all(self):
-        self.boxes = []
-        self.update_box_layer()
-
-    def get_boxes_sorted(self, by='area', reverse=False):
-        return sorted(self.boxes,
-                     key=lambda b: getattr(b, by)(),
-                     reverse=reverse)
-
-    def to_list(self):
+    # Serializacja
+    def to_list(self) -> List[dict]:
+        """Eksport boxów do listy słowników"""
         return [box.to_dict() for box in self.boxes]
 
-    def from_list(self, boxes_data):
+    def from_list(self, boxes_data: List[dict]) -> None:
+        """Import boxów z listy słowników"""
         self.clear_all()
         for data in boxes_data:
             self.boxes.append(BoundingBox.from_dict(data))
-        self.update_box_layer()
+        self.invalidate_cache()
 
+    # Zarządzanie cache
+    def invalidate_cache(self):
+        """Unieważnia cache po modyfikacjach"""
+        self._boxes_cache = None
+
+    def __del__(self):
+        """Destruktor - dodatkowe czyszczenie"""
+        self.clear_all()

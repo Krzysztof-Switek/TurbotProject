@@ -1,460 +1,241 @@
 import numpy as np
 import cv2
-from typing import List, Optional, Tuple, Set
-from dataclasses import dataclass
+from typing import List, Optional, Tuple
+from dataclasses import dataclass, field
 import uuid
-from enum import Enum, auto
-
-
-class RowEditMode(Enum):
-    NONE = auto()
-    EDIT = auto()
-    ADD = auto()
-
-
-@dataclass
-class BoundingBox:
-    x1: float
-    y1: float
-    x2: float
-    y2: float
-    text: str = ""
-    confidence: float = 0.0
-    id: str = ""
+import math
+from bounding_box import BoundingBox
+from math import hypot
 
 
 @dataclass
 class RowLine:
-    slope: float
-    intercept: float
-    boxes: List[BoundingBox]
+    p1: Tuple[float, float]
+    p2: Tuple[float, float]
     id: str
-    p1: Optional[Tuple[float, float]] = None
-    p2: Optional[Tuple[float, float]] = None
-    locked: bool = False
-    color: Tuple[int, int, int] = (0, 0, 255)  # Domyślnie czerwony
+    color: Tuple[int, int, int] = (0, 255, 255)  # Żółty
+    thickness: int = 1
+
+    def move(self, dx: float, dy: float):
+        self.p1 = (self.p1[0] + dx, self.p1[1] + dy)
+        self.p2 = (self.p2[0] + dx, self.p2[1] + dy)
 
 
 class RowDetector:
+    @dataclass
+    class Row:
+        id: int
+        line: RowLine
+        boxes: List[BoundingBox] = field(default_factory=list)
+        # None = przypisanie A/B przez geometrię; 'A' / 'B' = manualny override.
+        compartment_override: Optional[str] = None
+
+        def add_box(self, box: BoundingBox) -> bool:
+            """Dodaje box jeśli przecina się z linią wiersza"""
+            if not self._does_line_intersect_box(self.line, box):
+                return False
+
+            if box not in self.boxes:
+                self.boxes.append(box)
+                self.boxes.sort(key=lambda b: b.x1 + b.width() / 2)
+            return True
+
+        def remove_box(self, box: BoundingBox) -> bool:
+            try:
+                self.boxes.remove(box)
+                return True
+            except ValueError:
+                return False
+
+        def _does_line_intersect_box(self, line: RowLine, box: BoundingBox) -> bool:
+            """Sprawdza czy linia przecina box (dokładne sprawdzenie geometrii)"""
+            # Konwersja punktów do numpy array
+            line_p1 = np.array(line.p1)
+            line_p2 = np.array(line.p2)
+
+            # Wierzchołki boxa w kolejności zgodnej z ruchem wskazówek zegara
+            box_corners = [
+                np.array([box.x1, box.y1]),  # Lewy górny
+                np.array([box.x2, box.y1]),  # Prawy górny
+                np.array([box.x2, box.y2]),  # Prawy dolny
+                np.array([box.x1, box.y2])  # Lewy dolny
+            ]
+
+            # Sprawdź przecięcie z każdą krawędzią boxa
+            for i in range(4):
+                a = box_corners[i]
+                b = box_corners[(i + 1) % 4]
+
+                if self._line_segments_intersect(line_p1, line_p2, a, b):
+                    return True
+
+            # Sprawdź czy linia jest całkowicie wewnątrz boxa
+            return (self._point_in_box(line_p1, box) or
+                    self._point_in_box(line_p2, box))
+
+        def _line_segments_intersect(self, p1: np.ndarray, p2: np.ndarray,
+                                     q1: np.ndarray, q2: np.ndarray) -> bool:
+            """Sprawdza czy dwa odcinki się przecinają"""
+            r = p2 - p1
+            s = q2 - q1
+            qp = q1 - p1
+
+            cross_rs = np.cross(r, s)
+            if abs(cross_rs) < 1e-12:  # Linie równoległe
+                return False
+
+            t = np.cross(qp, s) / cross_rs
+            u = np.cross(qp, r) / cross_rs
+
+            return (0 <= t <= 1) and (0 <= u <= 1)
+
+        def _point_in_box(self, point: np.ndarray, box: BoundingBox) -> bool:
+            """Sprawdza czy punkt jest wewnątrz boxa"""
+            return (box.x1 <= point[0] <= box.x2 and
+                    box.y1 <= point[1] <= box.y2)
+
     def __init__(self, bbox_manager):
         self.bbox_manager = bbox_manager
-        self.rows: List[RowLine] = []
-        self.edit_mode = RowEditMode.NONE
-        self.selected_row: Optional[RowLine] = None
-        self.drag_start: Optional[Tuple[int, int]] = None
-        self.drag_type: Optional[str] = None
+        self.rows: List[RowDetector.Row] = []
+        self.current_line: Optional[RowLine] = None
+        self.drawing_started = False
 
-        # Parametry konfiguracyjne
-        self.line_extension_factor = 0.2  # 20% rozszerzenia linii
-        self.min_line_length = 50  # Minimalna długość linii
-        self.max_slope = 0.1  # Maksymalne dopuszczalne nachylenie
-        self.y_grouping_threshold = 0.4  # 40% wysokości boxu
-        self.x_grouping_threshold = 1.5  # 1.5 szerokości boxu
-        self.debug_mode = False  # Tryb debugowania
-
-    def set_edit_mode(self, mode: RowEditMode) -> bool:
-        """Ustawia tryb edycji linii. Zwraca True jeśli zmiana się powiodła."""
-        if isinstance(mode, RowEditMode):
-            self.edit_mode = mode
-            self._reset_selection()
-            return True
-        return False
-
-    def detect_rows(self) -> List[RowLine]:
-        """
-        Główna metoda wykrywająca wiersze. Algorytm:
-        1. Sortuje boxy od góry do dołu obrazu
-        2. Grupuje boxy w wiersze na podstawie odległości
-        3. Dla każdej grupy oblicza linię metodą najmniejszych kwadratów
-        4. Gwarantuje, że każdy box należy do dokładnie jednego wiersza
-        5. Zapobiega przecięciom linii
-        """
-        self.rows = [row for row in self.rows if row.locked]  # Zachowaj zamrożone linie
-        used_boxes: Set[BoundingBox] = set()
-
-        # Zbierz wszystkie boxy nieprzypisane do zamrożonych linii
-        all_boxes = set(self.bbox_manager.boxes)
-        for row in self.rows:
-            used_boxes.update(row.boxes)
-
-        remaining_boxes = sorted(
-            [b for b in all_boxes if b not in used_boxes],
-            key=lambda b: ((b.y1 + b.y2) / 2, b.x1)  # Sortuj Y-potem-X
+    def start_new_line(self, x: int, y: int) -> None:
+        self.current_line = RowLine(
+            p1=(float(x), float(y)),
+            p2=(float(x), float(y)),
+            id=str(uuid.uuid4())
         )
+        self.drawing_started = True
 
-        if not remaining_boxes and not self.rows:
-            return self.rows
+    def update_line_end(self, x: int, y: int) -> None:
+        """Aktualizuje koniec linii tylko gdy jest aktywny proces rysowania"""
+        if self.current_line is not None:
+            self.current_line.p2 = (float(x), float(y))
 
-        # Oblicz średnie rozmiary boxów dla dynamicznych progów
-        avg_height = np.mean([b.y2 - b.y1 for b in remaining_boxes]) if remaining_boxes else 30
-        avg_width = np.mean([b.x2 - b.x1 for b in remaining_boxes]) if remaining_boxes else 30
-
-        y_threshold = avg_height * self.y_grouping_threshold
-        x_threshold = avg_width * self.x_grouping_threshold
-
-        # Faza 1: Grupowanie boxów w wiersze
-        while remaining_boxes:
-            current_box = remaining_boxes.pop(0)
-            current_group = [current_box]
-
-            # Szukaj sąsiadów w poziomie i pionie
-            i = 0
-            while i < len(remaining_boxes):
-                box = remaining_boxes[i]
-                last_in_group = current_group[-1]
-
-                # Warunki grupowania
-                y_condition = abs((box.y1 + box.y2) / 2 - (last_in_group.y1 + last_in_group.y2) / 2) < y_threshold
-                x_condition = (box.x1 - last_in_group.x2) < x_threshold
-
-                if y_condition and x_condition:
-                    current_group.append(remaining_boxes.pop(i))
-                else:
-                    i += 1
-
-            # Utwórz linię dla grupy
-            if current_group:
-                self._create_row_from_boxes(current_group)
-                used_boxes.update(current_group)
-
-        # Faza 2: Przypisz pozostałe boxy do najbliższych linii
-        self._assign_remaining_boxes(used_boxes)
-
-        if self.debug_mode:
-            print(f"Debug: Stworzono {len(self.rows)} wierszy")
-            for i, row in enumerate(self.rows):
-                print(f"Wiersz {i}: boxy={len(row.boxes)}, slope={row.slope:.2f}")
-
-        return self.rows
-
-    def handle_mouse_event(self, event, x, y) -> bool:
-        """Obsługa zdarzeń myszy w trybie edycji"""
-        if self.edit_mode == RowEditMode.NONE:
-            return False
-
-        handlers = {
-            cv2.EVENT_LBUTTONDOWN: self._handle_left_click,
-            cv2.EVENT_MOUSEMOVE: self._handle_mouse_move,
-            cv2.EVENT_LBUTTONUP: self._handle_left_release
-        }
-
-        if event in handlers:
-            return handlers[event](x, y)
-        return False
-
-    def _assign_remaining_boxes(self, used_boxes: Set[BoundingBox]) -> None:
-        """Przypisuje pozostałe boxy do najbliższych istniejących linii."""
-        remaining_boxes = [b for b in self.bbox_manager.boxes if b not in used_boxes]
-
-        for box in remaining_boxes:
-            if not self.rows:
-                # Jeśli nie ma żadnych linii, utwórz nową dla tego boxa
-                self._create_row_from_boxes([box])
-                continue
-
-            # Znajdź najbliższą nie-zamrożoną linię
-            box_center_y = (box.y1 + box.y2) / 2
-            closest_row = min(
-                (r for r in self.rows if not r.locked),
-                key=lambda r: abs((r.p1[1] + r.p2[1]) / 2 - box_center_y),
-                default=None
-            )
-
-            if closest_row:
-                closest_row.boxes.append(box)
-                self._update_line_endpoints(closest_row)
-                if self.debug_mode:
-                    print(f"Debug: Przypisano box {box.id} do wiersza {closest_row.id}")
-            else:
-                # Jeśli wszystkie linie są zamrożone, utwórz nową
-                self._create_row_from_boxes([box])
-
-
-    def _handle_left_click(self, x: int, y: int) -> bool:
-        """Obsługa pojedynczego kliknięcia myszą"""
-        if self.edit_mode == RowEditMode.ADD:
-            return self._add_new_line(x, y)
-        elif self.edit_mode == RowEditMode.EDIT:
-            return self._select_line_for_edit(x, y)
-        return False
-
-    def _handle_mouse_move(self, x: int, y: int) -> bool:
-        """Obsługa ruchu myszą z wciśniętym przyciskiem"""
-        if not self.selected_row or not self.drag_start or not self.drag_type:
-            return False
-
-        if self.drag_type == 'move':
-            dx = x - self.drag_start[0]
-            dy = y - self.drag_start[1]
-
-            temp_row = RowLine(
-                slope=self.selected_row.slope,
-                intercept=self.selected_row.intercept,
-                boxes=self.selected_row.boxes.copy(),
-                id=self.selected_row.id,
-                p1=(self.selected_row.p1[0] + dx, self.selected_row.p1[1] + dy),
-                p2=(self.selected_row.p2[0] + dx, self.selected_row.p2[1] + dy)
-            )
-
-            other_rows = [row for row in self.rows if row.id != self.selected_row.id]
-            if not self._check_line_intersections(temp_row, other_rows):
-                self.selected_row.p1 = (self.selected_row.p1[0] + dx, self.selected_row.p1[1] + dy)
-                self.selected_row.p2 = (self.selected_row.p2[0] + dx, self.selected_row.p2[1] + dy)
-                self._update_line_from_points()
-                self.drag_start = (x, y)
-                return True
-            return False
-
-        elif self.drag_type == 'p1':
-            temp_row = RowLine(
-                slope=self.selected_row.slope,
-                intercept=self.selected_row.intercept,
-                boxes=self.selected_row.boxes.copy(),
-                id=self.selected_row.id,
-                p1=(x, y),
-                p2=self.selected_row.p2
-            )
-
-            other_rows = [row for row in self.rows if row.id != self.selected_row.id]
-            if not self._check_line_intersections(temp_row, other_rows):
-                self.selected_row.p1 = (x, y)
-                self._update_line_from_points()
-                self.drag_start = (x, y)
-                return True
-            return False
-
-        elif self.drag_type == 'p2':
-            temp_row = RowLine(
-                slope=self.selected_row.slope,
-                intercept=self.selected_row.intercept,
-                boxes=self.selected_row.boxes.copy(),
-                id=self.selected_row.id,
-                p1=self.selected_row.p1,
-                p2=(x, y)
-            )
-
-            other_rows = [row for row in self.rows if row.id != self.selected_row.id]
-            if not self._check_line_intersections(temp_row, other_rows):
-                self.selected_row.p2 = (x, y)
-                self._update_line_from_points()
-                self.drag_start = (x, y)
-                return True
-            return False
-
-        return False
-
-    def _handle_left_release(self, x: int, y: int) -> bool:
-        """Obsługa zwolnienia przycisku myszy"""
-        if self.selected_row:
-            self.selected_row.locked = True
-            self._update_line_from_points()
-            self._reset_selection()
-            return True
-        return False
-
-    def _add_new_line(self, x: int, y: int) -> bool:
-        """Dodawanie nowej linii"""
-        new_row = RowLine(
-            slope=0.0,
-            intercept=float(y),
-            boxes=[],
-            id=str(uuid.uuid4()),
-            p1=(x - 100, y),
-            p2=(x + 100, y),
-            color=(0, 255, 255)  # Żółty dla nowo dodanych linii
-        )
-        self.rows.append(new_row)
-        self.selected_row = new_row
-        self.drag_type = 'p2'
-        self.drag_start = (x, y)
-        return True
-
-    def _select_line_for_edit(self, x: int, y: int) -> bool:
-        """Wybór linii do edycji z uwzględnieniem statusu locked"""
-        closest_row = None
-        min_dist = float('inf')
-
-        for row in self.rows:
-            if row.locked or not row.p1 or not row.p2:
-                continue
-
-            dist_p1 = np.hypot(x - row.p1[0], y - row.p1[1])  # Bezpieczniejsze niż sqrt
-            dist_p2 = np.hypot(x - row.p2[0], y - row.p2[1])
-            line_dist = self._distance_to_line(row.p1, row.p2, (x, y))
-
-            if dist_p1 < 30 and dist_p1 < min_dist:
-                min_dist = dist_p1
-                closest_row = row
-                self.drag_type = 'p1'
-            elif dist_p2 < 30 and dist_p2 < min_dist:
-                min_dist = dist_p2
-                closest_row = row
-                self.drag_type = 'p2'
-            elif line_dist < 20 and line_dist < min_dist:
-                min_dist = line_dist
-                closest_row = row
-                self.drag_type = 'move'
-
-        if closest_row:
-            self.selected_row = closest_row
-            self.drag_start = (x, y)
-            return True
-        return False
-
-    def _update_line_from_points(self) -> None:
-        """Aktualizacja parametrów linii na podstawie punktów końcowych"""
-        if not self.selected_row or not self.selected_row.p1 or not self.selected_row.p2:
+    def finish_line(self) -> None:
+        """Kończy rysowanie linii z walidacją i gwarancją spójności stanu"""
+        if self.current_line is None:
+            self.drawing_started = False
             return
 
-        x1, y1 = self.selected_row.p1
-        x2, y2 = self.selected_row.p2
+        line_length = math.hypot(
+            self.current_line.p2[0] - self.current_line.p1[0],
+            self.current_line.p2[1] - self.current_line.p1[1]
+        )
 
-        if x1 == x2:  # Linia pionowa
-            self.selected_row.slope = float('inf')
-            self.selected_row.intercept = x1
-        else:
-            self.selected_row.slope = (y2 - y1) / (x2 - x1)
-            self.selected_row.intercept = y1 - self.selected_row.slope * x1
+        if line_length < 10.0:
+            print("Odrzucono linię: zbyt krótka (minimalna długość: 10px)")
+            self._reset_drawing_state()
+            return
+
+        self._assign_boxes_to_line()
+        self._reset_drawing_state()
+
+    def _reset_drawing_state(self) -> None:
+        """Prywatna metoda do resetowania stanu rysowania"""
+        self.current_line = None
+        self.drawing_started = False
 
     def draw_rows(self, image: np.ndarray) -> None:
-        """Rysowanie linii wierszy na obrazie"""
-        if image is None or len(image.shape) < 2:
+        """Rysuje wszystkie linie na obrazie"""
+        if image is None:
             return
 
         for row in self.rows:
-            if not row.p1 or not row.p2:
-                continue
+            cv2.line(image,
+                     (int(row.line.p1[0]), int(row.line.p1[1])),
+                     (int(row.line.p2[0]), int(row.line.p2[1])),
+                     row.line.color, 1)
 
-            color = row.color
-            thickness = 3 if row == self.selected_row else 2
+        if self.current_line is not None:
+            cv2.line(image,
+                     (int(self.current_line.p1[0]), int(self.current_line.p1[1])),
+                     (int(self.current_line.p2[0]), int(self.current_line.p2[1])),
+                     self.current_line.color, 1, cv2.LINE_AA)
 
-            # Zabezpieczenie przed rysowaniem poza obrazem
-            h, w = image.shape[:2]
-            p1 = (int(np.clip(row.p1[0], 0, w - 1)), int(np.clip(row.p1[1], 0, h - 1)))
-            p2 = (int(np.clip(row.p2[0], 0, w - 1)), int(np.clip(row.p2[1], 0, h - 1)))
+    def clear_rows(self) -> None:
+        """Czyści wszystkie linie"""
+        self.rows = []
+        self.current_line = None
+        self.drawing_started = False
+        print("All lines cleared")
 
-            cv2.line(image, p1, p2, color, thickness)
+    def remove_line(self, line: RowLine) -> bool:
+        """Usuwa linię z listy"""
+        self.rows = [row for row in self.rows if row.line != line]
+        return True
 
-            if row == self.selected_row:
-                cv2.circle(image, p1, 8, (255, 0, 0), -1)
-                cv2.circle(image, p2, 8, (255, 0, 0), -1)
+    def get_line_at(self, x: int, y: int, tolerance: float = 10.0) -> Optional[RowLine]:
+        """Znajduje linię w pobliżu punktu (x,y)"""
+        for row in self.rows:
+            dist_p1 = hypot(x - row.line.p1[0], y - row.line.p1[1])
+            dist_p2 = hypot(x - row.line.p2[0], y - row.line.p2[1])
+            dist_line = self._distance_to_line(row.line.p1, row.line.p2, (x, y))
 
-    def _reset_selection(self) -> None:
-        """Resetowanie stanu selekcji"""
-        self.selected_row = None
-        self.drag_start = None
-        self.drag_type = None
+            if min(dist_p1, dist_p2, dist_line) < tolerance:
+                return row.line
+        return None
 
-    def _create_row_from_boxes(self, boxes: List[BoundingBox]) -> None:
-        """
-        Tworzy nową linię na podstawie grupy boxów.
-        Wymusza przyjęcie linii poziomej jeśli nachylenie jest zbyt duże.
-        """
-        if not boxes:
+    def _assign_boxes_to_line(self) -> None:
+        """Optymalne przypisywanie boxów do linii z zachowaniem dokładnej logiki."""
+        if not self.current_line:
             return
 
-        # Oblicz parametry linii
-        x_centers = [(b.x1 + b.x2) / 2 for b in boxes]
-        y_centers = [(b.y1 + b.y2) / 2 for b in boxes]
+        # 1. Przygotowanie danych linii
+        line_p1 = np.array(self.current_line.p1)
+        line_p2 = np.array(self.current_line.p2)
+        line_vector = line_p2 - line_p1
+        line_length = np.linalg.norm(line_vector)
 
-        # Metoda najmniejszych kwadratów
-        A = np.vstack([x_centers, np.ones(len(x_centers))]).T
-        slope, intercept = np.linalg.lstsq(A, y_centers, rcond=None)[0]
+        # 2. Stwórz zbiór ID już przypisanych boxów
+        assigned_box_ids = {box.id for row in self.rows for box in row.boxes}
 
-        # Wymuś linię poziomą jeśli nachylenie zbyt duże
-        if abs(slope) > self.max_slope:
-            slope = 0.0
-            intercept = np.median(y_centers)  # Median jest bardziej odporny na outliers
-
-        new_row = RowLine(
-            slope=slope,
-            intercept=intercept,
-            boxes=boxes.copy(),
-            id=str(uuid.uuid4()),
-            color=(0, 255, 0)  # Zielony dla automatycznych linii
+        # 3. Oblicz prostokąt otaczający linię z marginesem
+        margin = 50  # pikseli
+        line_rect = (
+            min(self.current_line.p1[0], self.current_line.p2[0]) - margin,
+            min(self.current_line.p1[1], self.current_line.p2[1]) - margin,
+            max(self.current_line.p1[0], self.current_line.p2[0]) + margin,
+            max(self.current_line.p1[1], self.current_line.p2[1]) + margin
         )
 
-        self._update_line_endpoints(new_row)
+        new_row = self.Row(
+            id=len(self.rows) + 1,
+            line=self.current_line
+        )
 
-        # Sprawdź przecięcia z istniejącymi liniami
-        if not self._check_line_intersections(new_row, [r for r in self.rows if r.locked]):
+        # 4. Filtruj i przypisuj boxy
+        for box in self.bbox_manager.boxes:
+            # Krok 1: Czy box nie jest już przypisany?
+            if box.id in assigned_box_ids:
+                continue
+
+            # Krok 2: Czy box jest w przybliżonym obszarze linii?
+            if not (box.x2 >= line_rect[0] and box.x1 <= line_rect[2] and
+                    box.y2 >= line_rect[1] and box.y1 <= line_rect[3]):
+                continue
+
+            # Krok 3: Dokładne sprawdzenie przecięcia
+            if new_row._does_line_intersect_box(self.current_line, box):
+                new_row.boxes.append(box)
+                print(f"Przypisano box {box.id} do wiersza {new_row.id}")
+
+        # Posortuj boxy w wierszu
+        new_row.boxes.sort(key=lambda b: b.x1 + b.width() / 2)
+
+        if new_row.boxes:
             self.rows.append(new_row)
-        elif self.debug_mode:
-            print(f"Debug: Odrzucono linię z powodu przecięcia (ID: {new_row.id})")
-
-    def _update_line_endpoints(self, row: RowLine) -> None:
-        """Aktualizuje punkty końcowe linii na podstawie przypisanych boxów."""
-        if not row.boxes:
-            return
-
-        x_coords = [b.x1 for b in row.boxes] + [b.x2 for b in row.boxes]
-        min_x, max_x = min(x_coords), max(x_coords)
-        extension = (max_x - min_x) * self.line_extension_factor
-
-        if abs(row.slope) < 1e-6:  # Linia pozioma
-            y = row.intercept
-            row.p1 = (min_x - extension, y)
-            row.p2 = (max_x + extension, y)
-        else:  # Linia ukośna
-            row.p1 = (min_x - extension, row.slope * (min_x - extension) + row.intercept)
-            row.p2 = (max_x + extension, row.slope * (max_x + extension) + row.intercept)
+            print(f"Utworzono nowy wiersz {new_row.id} z {len(new_row.boxes)} boxami")
 
     def _distance_to_line(self, p1: Tuple[float, float], p2: Tuple[float, float],
                           point: Tuple[float, float]) -> float:
-        """Oblicza odległość punktu od linii zdefiniowanej przez p1 i p2"""
+        """Oblicza odległość punktu od linii"""
+        x0, y0 = point
         x1, y1 = p1
         x2, y2 = p2
-        x0, y0 = point
 
-        if x1 == x2:  # Linia pionowa
-            return abs(x0 - x1)
+        numerator = abs((y2 - y1) * x0 - (x2 - x1) * y0 + x2 * y1 - y2 * x1)
+        denominator = hypot(y2 - y1, x2 - x1)
 
-        # Równanie linii: Ax + By + C = 0
-        A = y2 - y1
-        B = x1 - x2
-        C = x2 * y1 - x1 * y2
-
-        return abs(A * x0 + B * y0 + C) / np.sqrt(A ** 2 + B ** 2)
-
-    def _check_line_intersections(self, line: RowLine, other_lines: List[RowLine]) -> bool:
-        """Sprawdza czy linia przecina którąś z podanych linii"""
-        if not line.p1 or not line.p2:
-            return False
-
-        for other_line in other_lines:
-            if not other_line.p1 or not other_line.p2:
-                continue
-
-            if self._do_lines_intersect(line.p1, line.p2, other_line.p1, other_line.p2):
-                return True
-        return False
-
-    def _do_lines_intersect(self, p1: Tuple[float, float], p2: Tuple[float, float],
-                            p3: Tuple[float, float], p4: Tuple[float, float]) -> bool:
-        """Sprawdza czy dwa odcinki się przecinają"""
-
-        def ccw(A, B, C):
-            return (C[1] - A[1]) * (B[0] - A[0]) > (B[1] - A[1]) * (C[0] - A[0])
-
-        A, B = p1, p2
-        C, D = p3, p4
-
-        # Sprawdzenie czy odcinki się przecinają
-        intersect = ccw(A, C, D) != ccw(B, C, D) and ccw(A, B, C) != ccw(A, B, D)
-
-        # Ignorujemy przypadki gdy końce się stykają
-        if (A == C or A == D or B == C or B == D):
-            return False
-
-        return intersect
-
-    def enable_debug_mode(self, enable: bool = True):
-        """Włącza/wyłącza tryb debugowania z dodatkowymi printami"""
-        self.debug_mode = enable
-
-    def get_unassigned_boxes(self) -> List[BoundingBox]:
-        """Zwraca listę boxów nieprzypisanych do żadnego wiersza"""
-        used_boxes = set()
-        for row in self.rows:
-            used_boxes.update(row.boxes)
-        return [b for b in self.bbox_manager.boxes if b not in used_boxes]
+        return numerator / denominator if denominator != 0 else 0

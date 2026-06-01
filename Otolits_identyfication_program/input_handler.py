@@ -1,233 +1,304 @@
 from enum import Enum, auto
 import cv2
-import sys
-from row_detector import RowEditMode
+from typing import Optional, Tuple, Union
+from dataclasses import dataclass
+from row_detector import RowLine
+from bounding_box import BoundingBox
+from image_cropper import compute_row_labels
+from math import hypot
 
 
-class Mode(Enum):
+class WorkMode(Enum):
     AUTO = auto()
     MANUAL = auto()
+
+
+class ManualMode(Enum):
+    ADD_BOX = auto()
+    ADD_LINE = auto()
+    DELETE = auto()
     MOVE = auto()
     RESIZE = auto()
-    DELETE = auto()
+    EDIT_LABEL = auto()
+
+
+@dataclass
+class SelectionContext:
+    element: Optional[object] = None
+    drag_start: Optional[Tuple[int, int]] = None
+    is_drawing: bool = False
+    corner_idx: Optional[Union[int, str]] = None
 
 
 class InputHandler:
-    def __init__(self, bounding_box_manager, row_detector):
-        self.bbox_manager = bounding_box_manager
+    def __init__(self, bbox_manager, row_detector):
+        self.bbox_manager = bbox_manager
         self.row_detector = row_detector
-        self.mode = Mode.AUTO
-        self.start_pos = None
-        self.current_pos = None
-        self.drawing = False
-        self.selected_box = None
-        self.drag_offset = None
-        self._show_initial_status()  # Pokaz status tylko raz przy starcie
+        self.work_mode = WorkMode.MANUAL
+        self.manual_mode = ManualMode.ADD_LINE
+        self.selection = SelectionContext()
+        self.temp_box = None
 
-    def _show_initial_status(self):
-        """Pokazuje status tylko raz przy inicjalizacji"""
-        status_lines = [
-            "=" * 50,
-            "Dostępne tryby pracy:",
-            "[m] - Tryb manualny (dodawanie boxów)",
-            "[v] - Tryb przesuwania boxów",
-            "[r] - Tryb zmiany rozmiaru",
-            "[d] - Tryb usuwania boxów",
-            "[1] - Edycja istniejących linii",
-            "[2] - Dodawanie nowej linii",
-            "[0] - Wyłącz edycję linii",
-            "[ESC] - Wyjście",
-            "=" * 50
-        ]
-        print("\n".join(status_lines))
-
-    def get_current_mode_text(self):
-        """Generuje tekst do wyświetlenia na obrazie"""
-        mode_text = f"Tryb: {self.mode.name}"
-        if self.row_detector.edit_mode != RowEditMode.NONE:
-            mode_text += f" | Edycja linii: {self.row_detector.edit_mode.name}"
-        return mode_text
-
-    def set_mode(self, mode):
-        """Zmiana trybu pracy"""
-        if isinstance(mode, Mode):
-            old_mode = self.mode
-            self.mode = mode
-
-            if mode != Mode.DELETE:
-                self.row_detector.set_edit_mode(RowEditMode.NONE)
-
-            return old_mode != mode
-        return False
-
-    def keyboard_callback(self, key):
-        """Obsługa zdarzeń klawiatury z natychmiastowym odświeżaniem"""
-        key_actions = {
-            ord('m'): lambda: (self.set_mode(Mode.MANUAL), True),
-            ord('v'): lambda: (self.set_mode(Mode.MOVE), True),
-            ord('r'): lambda: (self.set_mode(Mode.RESIZE), True),
-            ord('d'): lambda: (self.set_mode(Mode.DELETE), True),
-            27: lambda: ([cv2.destroyAllWindows(), sys.exit()], False),
-            ord('1'): lambda: (self.row_detector.set_edit_mode(RowEditMode.EDIT), True),
-            ord('2'): lambda: (self.row_detector.set_edit_mode(RowEditMode.ADD), True),
-            ord('0'): lambda: (self.row_detector.set_edit_mode(RowEditMode.NONE), True)
+        self.key_bindings = {
+            ord('a'): lambda: self._set_work_mode(WorkMode.AUTO),
+            ord('m'): lambda: self._set_work_mode(WorkMode.MANUAL),
+            ord('b'): lambda: self._set_manual_mode(ManualMode.ADD_BOX),
+            ord('l'): lambda: self._set_manual_mode(ManualMode.ADD_LINE),
+            ord('d'): lambda: self._set_manual_mode(ManualMode.DELETE),
+            ord('v'): lambda: self._set_manual_mode(ManualMode.MOVE),
+            ord('r'): lambda: self._set_manual_mode(ManualMode.RESIZE),
+            ord('e'): lambda: self._set_manual_mode(ManualMode.EDIT_LABEL),
+            27: self._reset_selection
         }
 
-        if key in key_actions:
-            action_result, needs_refresh = key_actions[key]()
-            if needs_refresh:
-                return True  # ImageWindow sam wywoła update_display()
-            return action_result
-        return False
+    def get_mode_info(self) -> str:
+        mode_info = f"Tryb: {'AUTO' if self.work_mode == WorkMode.AUTO else 'MANUAL'}"
+        if self.work_mode == WorkMode.MANUAL:
+            mode_names = {
+                ManualMode.ADD_BOX: "Dodawanie boxów",
+                ManualMode.ADD_LINE: "Dodawanie linii",
+                ManualMode.DELETE: "Usuwanie",
+                ManualMode.MOVE: "Przesuwanie",
+                ManualMode.RESIZE: "Zmiana rozmiaru",
+                ManualMode.EDIT_LABEL: "Edycja etykiety wiersza"
+            }
+            mode_info += f" | {mode_names[self.manual_mode]}"
+        return mode_info
 
-    def _set_row_edit_mode(self, mode):
-        """Ustawia tryb edycji linii"""
-        self.row_detector.set_edit_mode(mode)
-        return True
-
-    def _set_edit_mode(self, mode):
-        """Ustawia tryb edycji linii i wymusza aktualizację statusu"""
-        self.row_detector.set_edit_mode(mode)
-        return True
-
-    def mouse_callback(self, event, x, y, flags, param):
-        """Obsługa zdarzeń myszy"""
-        mode_handlers = {
-            Mode.MANUAL: self._handle_manual_mode,
-            Mode.MOVE: self._handle_move_mode,
-            Mode.RESIZE: self._handle_resize_mode,
-            Mode.DELETE: self._handle_delete_mode
+    def get_key_bindings_info(self) -> dict:
+        base_keys = {
+            "n": "Następne zdjęcie",
+            "q": "Wyjdź"
+        }
+        manual_keys = {
+            "b": "Dodaj box",
+            "l": "Dodaj linię",
+            "d": "Usuń",
+            "v": "Przesuń",
+            "r": "Zmień rozmiar",
+            "e": "Edytuj etykietę",
+            "Esc": "Anuluj"
         }
 
-        if self.mode in mode_handlers:
-            return mode_handlers[self.mode](event, x, y)
+        bindings = base_keys.copy()
+        if self.work_mode == WorkMode.MANUAL:
+            bindings.update(manual_keys)
+
+        bindings["Enter"] = "Wytnij boxy"
+        return bindings
+
+    def keyboard_callback(self, key: int) -> bool:
+        if key in self.key_bindings:
+            self.key_bindings[key]()
+            print(f"\n{self.get_mode_info()}")
+            return True
         return False
 
-    def reset(self):
-        """Resetowanie stanu do domyślnego"""
-        self.mode = Mode.AUTO
-        self.row_detector.set_edit_mode(RowEditMode.NONE)
-        self.start_pos = None
-        self.current_pos = None
-        self.drawing = False
-        self.selected_box = None
-        self.drag_offset = None
-        self._update_status()
+    def mouse_callback(self, event, x, y) -> bool:
+        if self.work_mode == WorkMode.AUTO:
+            return False
 
-    def _update_status(self):
-        """Aktualizacja statusu z wyraźnym wskazaniem aktywnych trybów"""
-        # Definicje stylów
-        ACTIVE_STYLE = "\033[1;32m"  # Pogrubiony zielony
-        MODE_STYLE = "\033[1;34m"  # Pogrubiony niebieski
-        RESET_STYLE = "\033[0m"  # Resetowanie stylów
+        try:
+            x, y = int(x), int(y)
+            handlers = {
+                cv2.EVENT_LBUTTONDOWN: self._handle_left_down,
+                cv2.EVENT_MOUSEMOVE: self._handle_mouse_move,
+                cv2.EVENT_LBUTTONUP: self._handle_left_up,
+            }
+            return handlers.get(event, lambda *_: False)(x, y)
+        except (ValueError, TypeError):
+            return False
 
-        # Przygotowanie linii statusu
-        status_lines = [
-            "=" * 50,
-            f"GŁÓWNY TRYB: {MODE_STYLE}{self.mode.name}{RESET_STYLE}",
-            "",
-            "EDYCJA LINII:",
-            self._format_option("[1]", "Edytuj istniejące linie", RowEditMode.EDIT),
-            self._format_option("[2]", "Dodaj nową linię", RowEditMode.ADD),
-            self._format_option("[0]", "Wyłącz edycję linii", RowEditMode.NONE),
-            "",
-            "INNE TRYBY:",
-            self._format_option("[m]", "Ręczne dodawanie boxów", Mode.MANUAL),
-            self._format_option("[v]", "Przesuwanie boxów", Mode.MOVE),
-            self._format_option("[r]", "Zmiana rozmiaru boxów", Mode.RESIZE),
-            self._format_option("[d]", "Usuwanie boxów/linii", Mode.DELETE),
-            "[ESC] Wyjście",
-            "=" * 50
-        ]
+    def _handle_left_down(self, x: int, y: int) -> bool:
+        self.selection.is_drawing = True
 
-        # Czyszczenie konsoli i wyświetlenie statusu
-        print("\033c", end="")  # Czyści konsolę
-        print("\n".join(status_lines))
-
-    def _format_option(self, prefix, text, mode_type):
-        """Formatuje opcję menu z uwzględnieniem aktywności"""
-        ACTIVE_STYLE = "\033[1;32m"
-        RESET_STYLE = "\033[0m"
-
-        if isinstance(mode_type, RowEditMode):
-            is_active = self.row_detector.edit_mode == mode_type
-        else:
-            is_active = self.mode == mode_type
-
-        if is_active:
-            return f"{prefix} {ACTIVE_STYLE}{text.upper()} (AKTYWNY){RESET_STYLE}"
-        return f"{prefix} {text}"
-
-    def _handle_manual_mode(self, event, x, y):
-        if event == cv2.EVENT_LBUTTONDOWN:
-            self.start_pos = (x, y)
-            self.current_pos = (x, y)
-            self.drawing = True
-            return True
-
-        elif event == cv2.EVENT_MOUSEMOVE and self.drawing:
-            self.current_pos = (x, y)
-            return True
-
-        elif event == cv2.EVENT_LBUTTONUP and self.drawing:
-            x1, y1 = self.start_pos
-            x2, y2 = x, y
-            x1, x2 = sorted([x1, x2])
-            y1, y2 = sorted([y1, y2])
-
-            if abs(x2 - x1) > 10 and abs(y2 - y1) > 10:
-                self.bbox_manager.add_box(x1, y1, x2, y2)
-
-            self.drawing = False
-            self.start_pos = None
-            self.current_pos = None
-            return True
-
-        return False
-
-    def _handle_move_mode(self, event, x, y):
-        if event == cv2.EVENT_LBUTTONDOWN:
-            box = self.bbox_manager.get_box_at(x, y, tolerance=5)
-            if box:
-                self.selected_box = box
-                self.drag_offset = (x - box.x1, y - box.y1)
-                return True
-
-        elif event == cv2.EVENT_MOUSEMOVE and self.selected_box:
-            dx = x - self.selected_box.x1 - self.drag_offset[0]
-            dy = y - self.selected_box.y1 - self.drag_offset[1]
-            self.selected_box.move(dx, dy)
-            return True
-
-        elif event == cv2.EVENT_LBUTTONUP and self.selected_box:
-            self.selected_box = None
-            return True
-
-        return False
-
-    def _handle_resize_mode(self, event, x, y):
-        if event == cv2.EVENT_LBUTTONDOWN:
-            box = self.bbox_manager.get_box_at(x, y, tolerance=10)
-            if box:
-                self.selected_box = box
-                self.drag_corner = box.get_nearest_corner(x, y)
-                return True
-
-        elif event == cv2.EVENT_MOUSEMOVE and self.selected_box:
-            self.selected_box.resize(self.drag_corner, x, y)
-            return True
-
-        elif event == cv2.EVENT_LBUTTONUP and self.selected_box:
-            self.selected_box = None
-            return True
-
-        return False
-
-    def _handle_delete_mode(self, event, x, y):
-        if event == cv2.EVENT_LBUTTONDOWN:
-            box = self.bbox_manager.get_box_at(x, y, tolerance=5)
-            if box:
+        if self.manual_mode == ManualMode.ADD_BOX:
+            self.temp_box = BoundingBox(x, y, x, y, is_temp=True)
+            self.selection.element = self.temp_box
+        elif self.manual_mode == ManualMode.ADD_LINE:
+            self.row_detector.start_new_line(x, y)
+        elif self.manual_mode == ManualMode.DELETE:
+            if box := self.bbox_manager.get_box_at(x, y):
                 self.bbox_manager.remove_box(box)
                 return True
-        return False
+            elif line := self.row_detector.get_line_at(x, y):
+                self.row_detector.remove_line(line)
+                return True
+        elif self.manual_mode == ManualMode.MOVE:
+            if box := self.bbox_manager.get_box_at(x, y):
+                self.selection.element = box
+            elif line := self.row_detector.get_line_at(x, y):
+                self.selection.element = line
+        elif self.manual_mode == ManualMode.RESIZE:
+            if box := self.bbox_manager.get_box_at(x, y):
+                self.selection.element = box
+                self.selection.corner_idx = box.get_nearest_corner(x, y)
+            elif line := self.row_detector.get_line_at(x, y):
+                dist_p1 = hypot(x - line.p1[0], y - line.p1[1])
+                dist_p2 = hypot(x - line.p2[0], y - line.p2[1])
+                self.selection.element = line
+                self.selection.corner_idx = 'p1' if dist_p1 < dist_p2 else 'p2'
+        elif self.manual_mode == ManualMode.EDIT_LABEL:
+            line = self.row_detector.get_line_at(x, y)
+            if line is None:
+                print(f"EDIT_LABEL: klik ({x}, {y}) nie trafia w żadną linię (tolerancja 10 px).")
+            else:
+                self._edit_row_label(line)
+            self.selection.is_drawing = False
+            return True
 
+        self.selection.drag_start = (x, y)
+        return True
+
+    def _handle_mouse_move(self, x: int, y: int) -> bool:
+        if not self.selection.is_drawing:
+            return False
+
+        if self.manual_mode == ManualMode.ADD_BOX and self.temp_box:
+            self.temp_box.x2 = x
+            self.temp_box.y2 = y
+            return True
+
+        if self.manual_mode == ManualMode.ADD_LINE:
+            self.row_detector.update_line_end(x, y)
+            return True
+
+        if not self.selection.element:
+            return False
+
+        dx, dy = x - self.selection.drag_start[0], y - self.selection.drag_start[1]
+        self.selection.drag_start = (x, y)
+
+        if self.manual_mode == ManualMode.MOVE:
+            if isinstance(self.selection.element, RowLine):
+                self.selection.element.move(dx, dy)
+                # Aktualizacja boxów dla wszystkich wierszy
+                for row in self.row_detector.rows:
+                    self._update_row_boxes(row)
+            elif isinstance(self.selection.element, BoundingBox):
+                self.selection.element.move(dx, dy)
+        elif self.manual_mode == ManualMode.RESIZE:
+            if isinstance(self.selection.element, RowLine):
+                if self.selection.corner_idx == 'p1':
+                    self.selection.element.p1 = (x, y)
+                elif self.selection.corner_idx == 'p2':
+                    self.selection.element.p2 = (x, y)
+                # Aktualizacja boxów dla wszystkich wierszy
+                for row in self.row_detector.rows:
+                    self._update_row_boxes(row)
+            elif isinstance(self.selection.element, BoundingBox):
+                self.selection.element.resize_corner(self.selection.corner_idx, x, y)
+
+        return True
+
+    def _handle_left_up(self, x: int, y: int) -> bool:
+        if not self.selection.is_drawing:
+            return False
+
+        self.selection.is_drawing = False
+
+        if self.manual_mode == ManualMode.ADD_BOX and self.temp_box:
+            x1, y1 = self.temp_box.x1, self.temp_box.y1
+            x2, y2 = x, y
+
+            if x1 != x2 and y1 != y2:
+                final_box = BoundingBox(
+                    min(x1, x2),
+                    min(y1, y2),
+                    max(x1, x2),
+                    max(y1, y2),
+                    is_temp=False
+                )
+                self.bbox_manager.add_box(final_box)
+            self.temp_box = None
+
+        elif self.manual_mode == ManualMode.ADD_LINE:
+            self.row_detector.finish_line()
+            # Aktualizacja boxów dla wszystkich wierszy
+            for row in self.row_detector.rows:
+                self._update_row_boxes(row)
+
+        self._reset_selection()
+        return True
+
+    def _reset_selection(self) -> None:
+        self.selection = SelectionContext()
+        self.temp_box = None
+
+    def _set_work_mode(self, mode: WorkMode) -> None:
+        self.work_mode = mode
+        self._reset_selection()
+        print(f"Aktywny tryb: {'AUTO' if mode == WorkMode.AUTO else 'MANUAL'}")
+
+    def _set_manual_mode(self, mode: ManualMode) -> None:
+        if self.work_mode == WorkMode.MANUAL:
+            self.manual_mode = mode
+            self._reset_selection()
+            print(f"Tryb manualny: {mode.name}")
+
+    def reset_to_defaults(self) -> None:
+        self.work_mode = WorkMode.MANUAL
+        self.manual_mode = ManualMode.ADD_LINE
+        self._reset_selection()
+
+    def _update_row_boxes(self, row):
+        """Pomocnicza metoda do aktualizacji boxów w wierszu.
+
+        Kolory są ustalane w ImageWindow.update_display na podstawie
+        przynależności boxa do wiersza — tu tylko aktualizujemy listę.
+        """
+        row.boxes.clear()
+
+        for box in self.bbox_manager.boxes:
+            if row._does_line_intersect_box(row.line, box):
+                row.boxes.append(box)
+
+        row.boxes.sort(key=lambda b: b.x1 + b.width() / 2)
+
+    def _edit_row_label(self, line: RowLine) -> None:
+        """Otwiera tkinter prompt 'A' / 'B' / 'auto' i ustawia override w Row."""
+        row = next((r for r in self.row_detector.rows if r.line is line), None)
+        if row is None:
+            print("Klik nie trafia w żaden wiersz.")
+            return
+
+        choice = self._prompt_compartment_choice(row.compartment_override)
+        if choice is None:
+            return  # user kliknął Cancel
+        value = choice.strip().upper()
+        if value in ("A", "B"):
+            old_override = row.compartment_override
+            row.compartment_override = value
+            _, err = compute_row_labels(self.row_detector.rows)
+            if err:
+                row.compartment_override = old_override
+                print(f"Nie można ustawić override='{value}': {err}")
+                return
+            print(f"Wiersz: override -> {value}")
+        elif value in ("AUTO", ""):
+            row.compartment_override = None
+            print("Wiersz: override -> auto (geometria)")
+        else:
+            print(f"Nieprawidłowa wartość '{choice}'. Dozwolone: A, B, auto.")
+
+    @staticmethod
+    def _prompt_compartment_choice(current: Optional[str]) -> Optional[str]:
+        """Prompt tkinter z 'A' / 'B' / 'auto'. Zwraca wybór lub None (Cancel).
+
+        Używa simpledialog.askstring z parent=shared Tk root.
+        simpledialog.Dialog wewnętrznie wywołuje deiconify → wait_visibility
+        → grab_set → wait_window w poprawnej kolejności i działa z
+        withdrawn parentem (custom Toplevel z transient() na withdrawn
+        root powodował 'ghost window' na Windows).
+        """
+        from tkinter import simpledialog
+        from image_loader import get_tk_root
+
+        root = get_tk_root()
+        choice = simpledialog.askstring(
+            "Etykieta wiersza",
+            "Wycinek (A / B / auto):",
+            initialvalue=current or "auto",
+            parent=root,
+        )
+        return choice
