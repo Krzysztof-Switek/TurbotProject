@@ -508,6 +508,361 @@ function formatBytes(n) {
 }
 
 // ============================================================================
+// ImageCanvas — render warstw + obsługa myszy/klawiatury
+// ============================================================================
+// Stan UI w pełni po stronie przeglądarki: imagePath, scale, originalSize,
+// boxes[], rows[], mode, selection (drag / temp_box / temp_line).
+//
+// Render warstwowy (port z desktop ImageWindow.update_display):
+//   1. Tło (przeskalowany obraz preview)
+//   2. Boxy (zielone gdy w wierszu, czerwone gdy nie)
+//   3. Linie wierszy (żółte)
+//   4. Ramki wycinków (niebieska A, fioletowa B)
+//   (5–7 etykiety + statusbar — krok 15; 8 walidacja — krok 17)
+
+const COLORS = Object.freeze({
+  BOX_OUT_OF_ROW: "#FF0000",
+  BOX_IN_ROW:     "#00FF00",
+  LINE:           "#FFFF00",
+  COMPARTMENT_A:  "#0000FF",
+  COMPARTMENT_B:  "#C800C8",
+  SELECTED:       "#FFFFFF",
+});
+
+const LINE_PROXIMITY_PX = 10;   // port get_line_at tolerancji
+const BOX_PICK_TOLERANCE = 5;   // port get_box_at tolerancji
+
+class ImageCanvas {
+  constructor({ canvas, onStateChange } = {}) {
+    this.canvas = canvas;
+    this.ctx = canvas.getContext("2d");
+    this.onStateChange = onStateChange ?? (() => {});
+
+    // Stan
+    this.imagePath = null;
+    this.image = null;            // HTMLImageElement
+    this.scale = 1.0;
+    this.originalSize = [0, 0];
+    this.boxes = [];              // BBox[]
+    this.rows = [];               // Row[]
+    this.mode = Modes.ADD_LINE;
+    this.selection = this._emptySelection();
+    this.tempBox = null;          // BBox podczas rysowania
+    this.lastError = null;        // err z computeRowLabels, do statusbara
+
+    // Event handlers
+    canvas.addEventListener("mousedown", (e) => this._onMouseDown(e));
+    canvas.addEventListener("mousemove", (e) => this._onMouseMove(e));
+    canvas.addEventListener("mouseup",   (e) => this._onMouseUp(e));
+    canvas.addEventListener("mouseleave",(e) => this._onMouseUp(e)); // zachowanie jak LMB up
+    canvas.addEventListener("contextmenu", (e) => e.preventDefault());
+  }
+
+  _emptySelection() {
+    return { element: null, dragStart: null, isDrawing: false, cornerIdx: null };
+  }
+
+  // ---------- public API ----------
+
+  async loadImage(path) {
+    const res = await fetch(Api.previewUrl(path));
+    if (!res.ok) {
+      const body = await res.json().catch(() => ({}));
+      throw new ApiError(res.status, body);
+    }
+    const scale = parseFloat(res.headers.get("X-Scale") ?? "1");
+    const origW = parseInt(res.headers.get("X-Original-Width") ?? "0", 10);
+    const origH = parseInt(res.headers.get("X-Original-Height") ?? "0", 10);
+    const blob = await res.blob();
+    const url = URL.createObjectURL(blob);
+
+    const img = await new Promise((resolve, reject) => {
+      const el = new Image();
+      el.onload = () => resolve(el);
+      el.onerror = reject;
+      el.src = url;
+    });
+
+    this.imagePath = path;
+    this.image = img;
+    this.scale = scale;
+    this.originalSize = [origW, origH];
+    this.boxes = [];
+    this.rows = [];
+    this.selection = this._emptySelection();
+    this.tempBox = null;
+    this.lastError = null;
+
+    this.canvas.width = img.width;
+    this.canvas.height = img.height;
+    this.render();
+    this.onStateChange();
+  }
+
+  setMode(mode) {
+    if (!Object.values(Modes).includes(mode)) return;
+    this.mode = mode;
+    this.selection = this._emptySelection();
+    this.tempBox = null;
+    this.onStateChange();
+    this.render();
+  }
+
+  applyDetectedBoxes(detectedBoxes) {
+    // Dodawane do istniejących (user może już mieć ręczne boxy).
+    for (const d of detectedBoxes) {
+      this.boxes.push(new BBox(d.x1, d.y1, d.x2, d.y2, { label: d.label ?? "auto" }));
+    }
+    this._reassignAllBoxesToRows();
+    this.render();
+    this.onStateChange();
+  }
+
+  toCropPayload(outputDir, saveAnnotations) {
+    return {
+      image_path: this.imagePath,
+      output_dir: outputDir,
+      scale: this.scale,
+      save_annotations: !!saveAnnotations,
+      rows: this.rows
+        .filter(r => r.boxes.length > 0)
+        .map(r => r.toJSON()),
+    };
+  }
+
+  // ---------- selekcja: znajdź box / linię pod kursorem ----------
+
+  _findBoxAt(x, y, tolerance = BOX_PICK_TOLERANCE) {
+    // Iteracja od końca (najnowsze wyżej) — port get_box_at.
+    for (let i = this.boxes.length - 1; i >= 0; i--) {
+      if (this.boxes[i].contains(x, y, tolerance)) return this.boxes[i];
+    }
+    return null;
+  }
+
+  _findRowByLineAt(x, y, tolerance = LINE_PROXIMITY_PX) {
+    for (const row of this.rows) {
+      if (row.line.proximity(x, y) < tolerance) return row;
+    }
+    return null;
+  }
+
+  // ---------- przypisania boxów do wierszy ----------
+
+  /** Port _update_row_boxes — przelicza boxes wiersza po edycji linii. */
+  _updateRowBoxes(row) {
+    row.boxes = this.boxes.filter(b => row.intersectsBox(b));
+    row.boxes.sort((a, b) => a.centerX - b.centerX);
+  }
+
+  _reassignAllBoxesToRows() {
+    for (const row of this.rows) this._updateRowBoxes(row);
+  }
+
+  // ---------- event handlers myszy ----------
+
+  _eventCoords(e) {
+    const rect = this.canvas.getBoundingClientRect();
+    return [e.clientX - rect.left, e.clientY - rect.top];
+  }
+
+  _onMouseDown(e) {
+    if (e.button !== 0) return; // tylko LMB
+    const [x, y] = this._eventCoords(e);
+
+    if (this.mode === Modes.ADD_BOX) {
+      this.tempBox = new BBox(x, y, x + 1, y + 1, { label: "user" });
+      this.selection.element = this.tempBox;
+      this.selection.dragStart = [x, y];
+      this.selection.isDrawing = true;
+    } else if (this.mode === Modes.ADD_LINE) {
+      // Tymczasowa linia jako element w selection (rysowana w render()).
+      const tempLine = new RowLine([x, y], [x, y]);
+      this.selection.element = tempLine;
+      this.selection.dragStart = [x, y];
+      this.selection.isDrawing = true;
+    } else if (this.mode === Modes.MOVE) {
+      const box = this._findBoxAt(x, y);
+      if (box) {
+        this.selection.element = box;
+      } else {
+        const row = this._findRowByLineAt(x, y);
+        if (row) this.selection.element = row;
+      }
+      this.selection.dragStart = [x, y];
+      this.selection.isDrawing = !!this.selection.element;
+    } else if (this.mode === Modes.RESIZE) {
+      const box = this._findBoxAt(x, y);
+      if (box) {
+        this.selection.element = box;
+        this.selection.cornerIdx = box.getNearestCorner(x, y);
+      } else {
+        const row = this._findRowByLineAt(x, y);
+        if (row) {
+          const d1 = Math.hypot(x - row.line.p1[0], y - row.line.p1[1]);
+          const d2 = Math.hypot(x - row.line.p2[0], y - row.line.p2[1]);
+          this.selection.element = row;
+          this.selection.cornerIdx = d1 < d2 ? "p1" : "p2";
+        }
+      }
+      this.selection.dragStart = [x, y];
+      this.selection.isDrawing = !!this.selection.element;
+    } else if (this.mode === Modes.DELETE) {
+      const box = this._findBoxAt(x, y);
+      if (box) {
+        this.boxes = this.boxes.filter(b => b !== box);
+        for (const row of this.rows) row.boxes = row.boxes.filter(b => b !== box);
+      } else {
+        const row = this._findRowByLineAt(x, y);
+        if (row) this.rows = this.rows.filter(r => r !== row);
+      }
+      this.render();
+      this.onStateChange();
+    } else if (this.mode === Modes.EDIT_LABEL) {
+      // Klik na linię → modal. Implementacja w kroku 16.
+      const row = this._findRowByLineAt(x, y);
+      if (row) this._openEditLabelModal?.(row);
+    }
+  }
+
+  _onMouseMove(e) {
+    if (!this.selection.isDrawing) return;
+    const [x, y] = this._eventCoords(e);
+
+    if (this.mode === Modes.ADD_BOX && this.tempBox) {
+      // Aktualizuj prawy-dolny róg (start fixed w dragStart).
+      const [sx, sy] = this.selection.dragStart;
+      this.tempBox.x1 = Math.min(sx, x);
+      this.tempBox.y1 = Math.min(sy, y);
+      this.tempBox.x2 = Math.max(sx, x);
+      this.tempBox.y2 = Math.max(sy, y);
+      this.render();
+      return;
+    }
+
+    if (this.mode === Modes.ADD_LINE && this.selection.element instanceof RowLine) {
+      this.selection.element.p2 = [x, y];
+      this.render();
+      return;
+    }
+
+    if (this.selection.element == null) return;
+
+    const [px, py] = this.selection.dragStart;
+    const dx = x - px;
+    const dy = y - py;
+    this.selection.dragStart = [x, y];
+
+    if (this.mode === Modes.MOVE) {
+      if (this.selection.element instanceof Row) {
+        this.selection.element.line.move(dx, dy);
+        this._reassignAllBoxesToRows();
+      } else if (this.selection.element instanceof BBox) {
+        this.selection.element.move(dx, dy);
+      }
+    } else if (this.mode === Modes.RESIZE) {
+      if (this.selection.element instanceof Row) {
+        if (this.selection.cornerIdx === "p1") this.selection.element.line.p1 = [x, y];
+        else if (this.selection.cornerIdx === "p2") this.selection.element.line.p2 = [x, y];
+        this._reassignAllBoxesToRows();
+      } else if (this.selection.element instanceof BBox) {
+        this.selection.element.resizeCorner(this.selection.cornerIdx, x, y);
+      }
+    }
+    this.render();
+  }
+
+  _onMouseUp(e) {
+    if (!this.selection.isDrawing) return;
+    const wasDrawing = this.selection.isDrawing;
+    const elem = this.selection.element;
+    const mode = this.mode;
+    this.selection = this._emptySelection();
+
+    if (mode === Modes.ADD_BOX && this.tempBox) {
+      if (this.tempBox.width > 2 && this.tempBox.height > 2) {
+        this.boxes.push(this.tempBox);
+        this._reassignAllBoxesToRows();
+      }
+      this.tempBox = null;
+    } else if (mode === Modes.ADD_LINE && elem instanceof RowLine) {
+      const length = Math.hypot(elem.p2[0] - elem.p1[0], elem.p2[1] - elem.p1[1]);
+      if (length >= 10) {
+        // Tworzymy Row z linią + boxami które przecina (port finish_line).
+        const row = new Row(elem, { boxes: [] });
+        this._updateRowBoxes(row);
+        if (row.boxes.length > 0) this.rows.push(row);
+      }
+    }
+
+    if (wasDrawing) {
+      this.render();
+      this.onStateChange();
+    }
+  }
+
+  // ---------- render ----------
+
+  render() {
+    if (!this.image) {
+      this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      return;
+    }
+    const ctx = this.ctx;
+
+    // Warstwa 1: tło
+    ctx.drawImage(this.image, 0, 0);
+
+    // Oblicz etykiety + ramki (potrzebne dla kolorowania boxów + warstwy 4).
+    const { labels, error } = computeRowLabels(this.rows);
+    this.lastError = error;
+    const bboxes = error === null
+      ? computeCompartmentBboxes(this.rows, { labels })
+      : {};
+
+    // Warstwa 2: boxy
+    for (const box of this.boxes) {
+      const inRow = this.rows.some(r => r.boxes.includes(box));
+      ctx.strokeStyle = inRow ? COLORS.BOX_IN_ROW : COLORS.BOX_OUT_OF_ROW;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(box.x1, box.y1, box.width, box.height);
+    }
+    if (this.tempBox) {
+      ctx.strokeStyle = COLORS.BOX_OUT_OF_ROW;
+      ctx.lineWidth = 1;
+      ctx.strokeRect(this.tempBox.x1, this.tempBox.y1, this.tempBox.width, this.tempBox.height);
+    }
+
+    // Warstwa 3: linie wierszy (+ aktualnie rysowana)
+    ctx.strokeStyle = COLORS.LINE;
+    ctx.lineWidth = 1;
+    for (const row of this.rows) {
+      ctx.beginPath();
+      ctx.moveTo(row.line.p1[0], row.line.p1[1]);
+      ctx.lineTo(row.line.p2[0], row.line.p2[1]);
+      ctx.stroke();
+    }
+    if (this.selection.element instanceof RowLine && this.selection.isDrawing && this.mode === Modes.ADD_LINE) {
+      const l = this.selection.element;
+      ctx.beginPath();
+      ctx.moveTo(l.p1[0], l.p1[1]);
+      ctx.lineTo(l.p2[0], l.p2[1]);
+      ctx.stroke();
+    }
+
+    // Warstwa 4: ramki wycinków
+    for (const label of ["A", "B"]) {
+      const b = bboxes[label];
+      if (!b) continue;
+      ctx.strokeStyle = label === "A" ? COLORS.COMPARTMENT_A : COLORS.COMPARTMENT_B;
+      ctx.lineWidth = 2;
+      ctx.strokeRect(b[0], b[1], b[2] - b[0], b[3] - b[1]);
+    }
+    // (warstwy 5–7 etykiety + statusbar — krok 15)
+  }
+}
+
+// ============================================================================
 // Smoke testy shared helpers (port spójności JS ↔ Python)
 // ============================================================================
 // Mini sanity check uruchamiany na starcie. Nie zastępuje prawdziwych testów,
@@ -603,22 +958,137 @@ function _runSmokeTests() {
 }
 
 // ============================================================================
-// Bootstrap (na razie tylko FileBrowser; ImageCanvas i mode handling w kolejnych krokach)
+// Bootstrap
 // ============================================================================
+const KEY_TO_MODE = {
+  b: Modes.ADD_BOX,
+  l: Modes.ADD_LINE,
+  v: Modes.MOVE,
+  r: Modes.RESIZE,
+  d: Modes.DELETE,
+  e: Modes.EDIT_LABEL,
+};
+
 window.addEventListener("DOMContentLoaded", () => {
   _runSmokeTests();
 
+  // Canvas
+  const canvas = document.getElementById("canvas");
+  const $statusMode = document.getElementById("status-mode");
+  const $statusFile = document.getElementById("status-file");
+  const $statusScale = document.getElementById("status-scale");
+  const $btnDetect = document.getElementById("btn-detect");
+  const $btnCrop = document.getElementById("btn-crop");
+
+  const updateStatusBar = () => {
+    $statusMode.textContent = `Tryb: ${imageCanvas.mode}`;
+    $statusFile.textContent = `Plik: ${imageCanvas.imagePath ?? "—"}`;
+    $statusScale.textContent = imageCanvas.image
+      ? `Skala: ${imageCanvas.scale.toFixed(3)}`
+      : "Skala: —";
+    // Liczniki + komunikat błędu w kroku 15+17 — placeholder.
+  };
+
+  const updateActionButtons = () => {
+    const hasImage = !!imageCanvas.image;
+    $btnDetect.disabled = !hasImage;
+    $btnCrop.disabled = !hasImage || !fileBrowser.getOutputDir();
+  };
+
+  const updateModeButtons = () => {
+    document.querySelectorAll(".mode-btn").forEach(btn => {
+      btn.classList.toggle("active", btn.dataset.mode === imageCanvas.mode);
+    });
+  };
+
+  const imageCanvas = new ImageCanvas({
+    canvas,
+    onStateChange: () => {
+      updateStatusBar();
+      updateActionButtons();
+      updateModeButtons();
+    },
+  });
+
+  // FileBrowser → loadImage
   const fileBrowser = new FileBrowser({
-    onSelectImage: (path) => {
-      console.log("Wybrano obraz:", path);
-      // ImageCanvas.loadImage(path) — krok 14
+    onSelectImage: async (path) => {
+      try {
+        await imageCanvas.loadImage(path);
+      } catch (e) {
+        alert(`Błąd ładowania obrazu: ${e.message}`);
+      }
     },
   });
   fileBrowser.cdTo("");
 
+  // Mode buttons
+  document.querySelectorAll(".mode-btn").forEach(btn => {
+    btn.addEventListener("click", () => imageCanvas.setMode(btn.dataset.mode));
+  });
+
+  // Auto-detect button
+  $btnDetect.addEventListener("click", async () => {
+    if (!imageCanvas.imagePath) return;
+    $btnDetect.disabled = true;
+    try {
+      const res = await Api.detect(imageCanvas.imagePath);
+      imageCanvas.applyDetectedBoxes(res.boxes);
+    } catch (e) {
+      alert(`Auto-detect: ${e.message}`);
+    } finally {
+      updateActionButtons();
+    }
+  });
+
+  // Crop button
+  $btnCrop.addEventListener("click", async () => {
+    const outputDir = fileBrowser.getOutputDir();
+    if (outputDir === null || !imageCanvas.imagePath) return;
+    const saveAnnotations = document.getElementById("chk-save-annotations").checked;
+    const payload = imageCanvas.toCropPayload(outputDir, saveAnnotations);
+    try {
+      const res = await Api.crop(payload);
+      const annot = res.annotations_path ? `\nAdnotacje: ${res.annotations_path}` : "";
+      alert(
+        `Zapisano ${res.saved.length} plików.\n` +
+        `Wycinek A: ${res.compartments.A}, B: ${res.compartments.B}${annot}`
+      );
+    } catch (e) {
+      alert(`Crop: ${e.message}`);
+    }
+  });
+
+  // Klawiatura globalna
+  document.addEventListener("keydown", (e) => {
+    // Ignoruj gdy focus jest w input lub modal otwarty.
+    if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
+    const backdrop = document.getElementById("modal-backdrop");
+    const mkdirBackdrop = document.getElementById("mkdir-backdrop");
+    if (!backdrop.hidden || !mkdirBackdrop.hidden) return;
+
+    const key = e.key.toLowerCase();
+    if (KEY_TO_MODE[key]) {
+      e.preventDefault();
+      imageCanvas.setMode(KEY_TO_MODE[key]);
+    } else if (e.key === "Escape") {
+      imageCanvas.setMode(imageCanvas.mode); // reset selection
+    } else if (e.key === "Enter") {
+      if (!$btnCrop.disabled) {
+        e.preventDefault();
+        $btnCrop.click();
+      }
+    }
+  });
+
+  // Initial state render
+  updateStatusBar();
+  updateActionButtons();
+  updateModeButtons();
+
   // Eksport globalny dla debugowania w DevTools.
   window.Turbot = {
-    Modes, BBox, RowLine, Row, Api, fileBrowser,
+    Modes, BBox, RowLine, Row, Api, fileBrowser, imageCanvas,
     computeRowLabels, computeCompartmentBboxes,
     splitCompartments, splitAutoByLargestGap,
     _runSmokeTests,
