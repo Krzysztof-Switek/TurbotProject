@@ -608,6 +608,10 @@ class ImageCanvas {
       el.src = url;
     });
 
+    // Sprawdź czy zmienił się katalog — wtedy pobierz kalibrację nową.
+    const prevDir = this.imagePath ? dirOfPath(this.imagePath) : null;
+    const newDir = dirOfPath(path);
+
     this.imagePath = path;
     this.image = img;
     this.scale = scale;
@@ -617,10 +621,22 @@ class ImageCanvas {
     this.selection = this._emptySelection();
     this.tempBox = null;
     this.lastError = null;
+    this.calibrationPoints = [];
 
     this.canvas.width = img.width;
     this.canvas.height = img.height;
     this.render();
+
+    // Auto-fetch kalibracji (jeśli zmienił się katalog lub jeszcze nie mamy).
+    if (newDir !== prevDir || this.calibration === null) {
+      try {
+        this.calibration = await Api.getCalibration(newDir);
+      } catch (e) {
+        console.warn("Nie udało się pobrać kalibracji:", e.message);
+        this.calibration = null;
+      }
+      this.render();
+    }
   }
 
   setMode(mode) {
@@ -647,6 +663,7 @@ class ImageCanvas {
       output_dir: outputDir,
       scale: this.scale,
       save_annotations: !!saveAnnotations,
+      um_per_px: this.calibration ? this.calibration.um_per_px : null,
       rows: this.rows
         .filter(r => r.boxes.length > 0)
         .map(r => r.toJSON()),
@@ -1084,6 +1101,7 @@ window.addEventListener("DOMContentLoaded", () => {
   const $statusMode = document.getElementById("status-mode");
   const $statusFile = document.getElementById("status-file");
   const $statusScale = document.getElementById("status-scale");
+  const $statusCalibration = document.getElementById("status-calibration");
   const $statusCounts = document.getElementById("status-counts");
   const $statusError = document.getElementById("status-error");
   const $btnDetect = document.getElementById("btn-detect");
@@ -1093,26 +1111,41 @@ window.addEventListener("DOMContentLoaded", () => {
     $statusMode.textContent = `Tryb: ${imageCanvas.mode}`;
     $statusFile.textContent = `Plik: ${imageCanvas.imagePath ?? "—"}`;
     $statusScale.textContent = imageCanvas.image
-      ? `Skala: ${imageCanvas.scale.toFixed(3)}`
-      : "Skala: —";
+      ? `Skala obrazu: ${imageCanvas.scale.toFixed(3)}`
+      : "Skala obrazu: —";
     const c = imageCanvas.lastCounts;
     $statusCounts.textContent = `Wycinek A: ${c.A} wierszy | Wycinek B: ${c.B} wierszy`;
     $statusError.textContent = imageCanvas.lastError ?? "";
+
+    // Kalibracja: μm/px + powiększenie + nazwa zdjęcia referencyjnego.
+    const calib = imageCanvas.calibration;
+    if (calib) {
+      const mag = calib.magnification ? ` (${calib.magnification}` : " (";
+      const ref = calib.reference_image ? `${mag ? mag + ", ref: " : "ref: "}${calib.reference_image})` : ")";
+      $statusCalibration.textContent = `Kalibracja: ${calib.um_per_px.toFixed(3)} μm/px${calib.magnification || calib.reference_image ? ref : ""}`;
+      $statusCalibration.style.color = "";
+    } else {
+      $statusCalibration.textContent = "Kalibracja: BRAK (klawisz k)";
+      $statusCalibration.style.color = "#ffaa44";
+    }
   };
 
   const updateActionButtons = () => {
     const hasImage = !!imageCanvas.image;
     const hasOutputDir = fileBrowser.getOutputDir() !== null;
     const hasValidRows = imageCanvas.lastError === null && imageCanvas.rows.length > 0;
+    const hasCalibration = !!imageCanvas.calibration;
     $btnDetect.disabled = !hasImage;
-    $btnCrop.disabled = !hasImage || !hasOutputDir || !hasValidRows;
-    $btnCrop.title = !hasOutputDir
-      ? "Wybierz katalog wyjściowy w sidebarze"
-      : !hasValidRows && imageCanvas.lastError
-        ? imageCanvas.lastError
-        : !hasValidRows
-          ? "Dodaj przynajmniej jeden wiersz (klawisz 'l')"
-          : "Wytnij boxy i zapisz pliki (Enter)";
+    $btnCrop.disabled = !hasImage || !hasOutputDir || !hasValidRows || !hasCalibration;
+    $btnCrop.title = !hasCalibration
+      ? "Wykonaj kalibrację skali (klawisz 'k')"
+      : !hasOutputDir
+        ? "Wybierz katalog wyjściowy w sidebarze"
+        : !hasValidRows && imageCanvas.lastError
+          ? imageCanvas.lastError
+          : !hasValidRows
+            ? "Dodaj przynajmniej jeden wiersz (klawisz 'l')"
+            : "Wytnij boxy i zapisz pliki (Enter)";
   };
 
   const updateModeButtons = () => {
