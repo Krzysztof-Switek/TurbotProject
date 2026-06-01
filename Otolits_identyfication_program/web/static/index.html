@@ -41,6 +41,7 @@
           <button class="mode-btn" data-mode="RESIZE"   title="Rozmiar (r)">r · Resize</button>
           <button class="mode-btn" data-mode="DELETE"   title="Usuń (d)">d · Del</button>
           <button class="mode-btn" data-mode="EDIT_LABEL" title="Edytuj etykietę (e)">e · Label</button>
+          <button class="mode-btn" data-mode="CALIBRATE"  title="Kalibracja skali — kliknij 2 punkty na linijce (k)">k · Skala</button>
         </div>
         <div class="actions">
           <button id="btn-detect" disabled>Auto-detect (YOLO)</button>
@@ -59,7 +60,8 @@
       <div class="statusbar" id="statusbar">
         <span id="status-mode">Tryb: —</span>
         <span id="status-file">Plik: —</span>
-        <span id="status-scale">Skala: —</span>
+        <span id="status-scale">Skala obrazu: —</span>
+        <span id="status-calibration">Kalibracja: —</span>
         <span id="status-counts">Wycinek A: 0 wierszy | Wycinek B: 0 wierszy</span>
         <span id="status-error" class="error"></span>
       </div>
@@ -80,6 +82,32 @@
       <div class="modal-buttons">
         <button id="modal-cancel">Anuluj (Esc)</button>
         <button id="modal-ok" class="primary">OK (Enter)</button>
+      </div>
+    </div>
+  </div>
+
+  <!-- Modal: kalibracja skali (po 2 klikach na linijce) -->
+  <div class="modal-backdrop" id="calib-backdrop" hidden>
+    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="calib-title">
+      <h2 id="calib-title">Kalibracja skali</h2>
+      <p style="font-size:12px;color:#aaa;margin:0 0 12px">
+        Podaj rzeczywistą długość odcinka między klikniętymi punktami.
+        <br>Dystans w preview: <span id="calib-dist-preview">—</span> px
+      </p>
+      <label for="calib-length">Długość rzeczywista:</label>
+      <div style="display:flex;gap:6px;margin-bottom:12px">
+        <input type="number" id="calib-length" step="any" placeholder="np. 2500" style="flex:1">
+        <select id="calib-unit">
+          <option value="um">μm</option>
+          <option value="mm">mm</option>
+        </select>
+      </div>
+      <label for="calib-magnification">Powiększenie (opcjonalne):</label>
+      <input type="text" id="calib-magnification" placeholder="np. 4x" style="margin-bottom:12px">
+      <p class="modal-error" id="calib-error" hidden></p>
+      <div class="modal-buttons">
+        <button id="calib-cancel">Anuluj</button>
+        <button id="calib-ok" class="primary">Zapisz kalibrację</button>
       </div>
     </div>
   </div>

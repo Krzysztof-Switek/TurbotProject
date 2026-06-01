@@ -20,6 +20,7 @@ const Modes = Object.freeze({
   RESIZE:     "RESIZE",
   DELETE:     "DELETE",
   EDIT_LABEL: "EDIT_LABEL",
+  CALIBRATE:  "CALIBRATE",
 });
 
 // ============================================================================
@@ -339,6 +340,23 @@ const Api = {
     if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => ({})));
     return res.json();
   },
+
+  async getCalibration(dir) {
+    const url = `/api/calibration?dir=${encodeURIComponent(dir)}`;
+    const res = await fetch(url);
+    if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => ({})));
+    return res.json();  // może być null
+  },
+
+  async saveCalibration(payload) {
+    const res = await fetch("/api/calibration", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify(payload),
+    });
+    if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => ({})));
+    return res.json();
+  },
 };
 
 class ApiError extends Error {
@@ -553,6 +571,10 @@ class ImageCanvas {
     this.lastCounts = { A: 0, B: 0 };
     this.lastError = null;        // err z computeRowLabels, do statusbara
 
+    // Kalibracja per-katalog (zachowywana między obrazami w tym samym katalogu).
+    this.calibration = null;      // { um_per_px, magnification, reference_image, ... }
+    this.calibrationPoints = [];  // [[x,y]] w trybie CALIBRATE — 0, 1 lub 2 kliki
+
     // Event handlers
     canvas.addEventListener("mousedown", (e) => this._onMouseDown(e));
     canvas.addEventListener("mousemove", (e) => this._onMouseMove(e));
@@ -606,6 +628,7 @@ class ImageCanvas {
     this.mode = mode;
     this.selection = this._emptySelection();
     this.tempBox = null;
+    this.calibrationPoints = [];  // reset trybu kalibracji
     this.render();
   }
 
@@ -721,6 +744,15 @@ class ImageCanvas {
       // Klik na linię → modal. Implementacja w kroku 16.
       const row = this._findRowByLineAt(x, y);
       if (row) this._openEditLabelModal?.(row);
+    } else if (this.mode === Modes.CALIBRATE) {
+      // Klik 1: dodaj punkt. Klik 2: otwórz modal z dystansem.
+      this.calibrationPoints.push([x, y]);
+      if (this.calibrationPoints.length === 2) {
+        const [p1, p2] = this.calibrationPoints;
+        this._openCalibrationModal?.(p1, p2);
+        this.calibrationPoints = []; // reset; modal lub jego cancel zostawi stary state
+      }
+      this.render();
     }
   }
 
@@ -893,6 +925,24 @@ class ImageCanvas {
       }
     }
 
+    // Punkty kalibracji (tylko w trybie CALIBRATE) — krzyżyki + linia podglądu.
+    if (this.mode === Modes.CALIBRATE && this.calibrationPoints.length > 0) {
+      ctx.strokeStyle = "#00FFFF";
+      ctx.lineWidth = 2;
+      for (const [px, py] of this.calibrationPoints) {
+        ctx.beginPath();
+        ctx.moveTo(px - 8, py); ctx.lineTo(px + 8, py);
+        ctx.moveTo(px, py - 8); ctx.lineTo(px, py + 8);
+        ctx.stroke();
+      }
+      if (this.calibrationPoints.length === 2) {
+        const [a, b] = this.calibrationPoints;
+        ctx.beginPath();
+        ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]);
+        ctx.stroke();
+      }
+    }
+
     // Warstwa 8: komunikat błędu walidacji na canvasie (gdy etykiety pominięte)
     if (error !== null) {
       ctx.font = "bold 16px sans-serif";
@@ -1017,7 +1067,14 @@ const KEY_TO_MODE = {
   r: Modes.RESIZE,
   d: Modes.DELETE,
   e: Modes.EDIT_LABEL,
+  k: Modes.CALIBRATE,
 };
+
+/** Wyciąga katalog z pełnej ścieżki pliku (relatywnej do DATA_ROOT). */
+function dirOfPath(path) {
+  const idx = path.lastIndexOf("/");
+  return idx >= 0 ? path.slice(0, idx) : "";
+}
 
 window.addEventListener("DOMContentLoaded", () => {
   _runSmokeTests();
@@ -1196,6 +1253,87 @@ window.addEventListener("DOMContentLoaded", () => {
 
   // Wpięcie do ImageCanvas (handler EDIT_LABEL używa optional chaining).
   imageCanvas._openEditLabelModal = openEditLabelModal;
+
+  // Modal kalibracji — wywoływany po 2 klikach w trybie CALIBRATE.
+  const openCalibrationModal = (p1, p2) => {
+    const $backdrop = document.getElementById("calib-backdrop");
+    const $distPreview = document.getElementById("calib-dist-preview");
+    const $length = document.getElementById("calib-length");
+    const $unit = document.getElementById("calib-unit");
+    const $magnification = document.getElementById("calib-magnification");
+    const $error = document.getElementById("calib-error");
+    const $ok = document.getElementById("calib-ok");
+    const $cancel = document.getElementById("calib-cancel");
+
+    const distPx = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
+    $distPreview.textContent = distPx.toFixed(1);
+
+    // Pre-fill z istniejącej kalibracji (jeśli jest).
+    if (imageCanvas.calibration) {
+      $length.value = imageCanvas.calibration.length_um;
+      $magnification.value = imageCanvas.calibration.magnification || "";
+    } else {
+      $length.value = "";
+      $magnification.value = "";
+    }
+    $unit.value = "um";
+    $error.hidden = true;
+    $backdrop.hidden = false;
+    setTimeout(() => $length.focus(), 0);
+
+    const cleanup = () => {
+      $ok.removeEventListener("click", onOk);
+      $cancel.removeEventListener("click", onCancel);
+      document.removeEventListener("keydown", onKey);
+      $backdrop.hidden = true;
+    };
+
+    const onOk = async () => {
+      const raw = parseFloat($length.value);
+      if (!isFinite(raw) || raw <= 0) {
+        $error.textContent = "Podaj dodatnią długość";
+        $error.hidden = false;
+        return;
+      }
+      const lengthUm = $unit.value === "mm" ? raw * 1000 : raw;
+      if (!imageCanvas.imagePath) {
+        $error.textContent = "Najpierw wczytaj zdjęcie";
+        $error.hidden = false;
+        return;
+      }
+      const dir = dirOfPath(imageCanvas.imagePath);
+      const referenceImage = imageCanvas.imagePath.slice(imageCanvas.imagePath.lastIndexOf("/") + 1);
+      try {
+        const calib = await Api.saveCalibration({
+          dir,
+          magnification: $magnification.value || "",
+          reference_image: referenceImage,
+          p1, p2,
+          length_um: lengthUm,
+          scale: imageCanvas.scale,
+        });
+        imageCanvas.calibration = calib;
+        cleanup();
+        imageCanvas.render();
+      } catch (e) {
+        $error.textContent = `Błąd zapisu: ${e.message}`;
+        $error.hidden = false;
+      }
+    };
+
+    const onCancel = () => { cleanup(); };
+
+    const onKey = (e) => {
+      if (e.key === "Enter")  { e.preventDefault(); onOk(); }
+      else if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+    };
+
+    $ok.addEventListener("click", onOk);
+    $cancel.addEventListener("click", onCancel);
+    document.addEventListener("keydown", onKey);
+  };
+
+  imageCanvas._openCalibrationModal = openCalibrationModal;
 
   // Klawiatura globalna
   document.addEventListener("keydown", (e) => {
