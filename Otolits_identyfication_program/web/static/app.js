@@ -548,6 +548,8 @@ class ImageCanvas {
     this.mode = Modes.ADD_LINE;
     this.selection = this._emptySelection();
     this.tempBox = null;          // BBox podczas rysowania
+    this.lastLabels = new Map();  // Map<Row, "A_n"> z ostatniego renderu
+    this.lastCounts = { A: 0, B: 0 };
     this.lastError = null;        // err z computeRowLabels, do statusbara
 
     // Event handlers
@@ -596,7 +598,6 @@ class ImageCanvas {
     this.canvas.width = img.width;
     this.canvas.height = img.height;
     this.render();
-    this.onStateChange();
   }
 
   setMode(mode) {
@@ -604,7 +605,6 @@ class ImageCanvas {
     this.mode = mode;
     this.selection = this._emptySelection();
     this.tempBox = null;
-    this.onStateChange();
     this.render();
   }
 
@@ -615,7 +615,6 @@ class ImageCanvas {
     }
     this._reassignAllBoxesToRows();
     this.render();
-    this.onStateChange();
   }
 
   toCropPayload(outputDir, saveAnnotations) {
@@ -717,7 +716,6 @@ class ImageCanvas {
         if (row) this.rows = this.rows.filter(r => r !== row);
       }
       this.render();
-      this.onStateChange();
     } else if (this.mode === Modes.EDIT_LABEL) {
       // Klik na linię → modal. Implementacja w kroku 16.
       const row = this._findRowByLineAt(x, y);
@@ -797,7 +795,6 @@ class ImageCanvas {
 
     if (wasDrawing) {
       this.render();
-      this.onStateChange();
     }
   }
 
@@ -806,6 +803,7 @@ class ImageCanvas {
   render() {
     if (!this.image) {
       this.ctx.clearRect(0, 0, this.canvas.width, this.canvas.height);
+      this.onStateChange();
       return;
     }
     const ctx = this.ctx;
@@ -813,9 +811,13 @@ class ImageCanvas {
     // Warstwa 1: tło
     ctx.drawImage(this.image, 0, 0);
 
-    // Oblicz etykiety + ramki (potrzebne dla kolorowania boxów + warstwy 4).
+    // Oblicz etykiety + ramki + liczniki (cache do statusbara).
     const { labels, error } = computeRowLabels(this.rows);
+    this.lastLabels = labels;
     this.lastError = error;
+    const counts = { A: 0, B: 0 };
+    for (const lbl of labels.values()) counts[lbl[0]]++;
+    this.lastCounts = counts;
     const bboxes = error === null
       ? computeCompartmentBboxes(this.rows, { labels })
       : {};
@@ -858,7 +860,42 @@ class ImageCanvas {
       ctx.lineWidth = 2;
       ctx.strokeRect(b[0], b[1], b[2] - b[0], b[3] - b[1]);
     }
-    // (warstwy 5–7 etykiety + statusbar — krok 15)
+
+    // Warstwa 5: literowe A/B w lewym górnym rogu ramki wycinka
+    ctx.font = "bold 18px sans-serif";
+    ctx.textBaseline = "top";
+    for (const label of ["A", "B"]) {
+      const b = bboxes[label];
+      if (!b) continue;
+      const x = b[0] + 4;
+      const y = b[1] + 2;
+      ctx.lineWidth = 3;
+      ctx.strokeStyle = "#FFFFFF";
+      ctx.strokeText(label, x, y);
+      ctx.fillStyle = label === "A" ? COLORS.COMPARTMENT_A : COLORS.COMPARTMENT_B;
+      ctx.fillText(label, x, y);
+    }
+
+    // Warstwa 6: etykiety wierszy (A_1, B_3) przy row.line.p1 + offset
+    ctx.font = "bold 14px sans-serif";
+    if (error === null) {
+      for (const row of this.rows) {
+        const label = labels.get(row);
+        if (!label) continue;
+        const x = row.line.p1[0] + 8;
+        const y = row.line.p1[1] - 20;
+        ctx.lineWidth = 3;
+        ctx.strokeStyle = "#000000";
+        ctx.strokeText(label, x, y);
+        ctx.fillStyle = "#FFFFFF";
+        ctx.fillText(label, x, y);
+      }
+    }
+    // (warstwa 7 statusbar — w bootstrap czyta this.lastCounts / lastError;
+    //  warstwa 8 komunikat błędu na canvasie — krok 17)
+
+    // Powiadom listenera (statusbar / przyciski) po każdym renderze.
+    this.onStateChange();
   }
 }
 
@@ -977,6 +1014,8 @@ window.addEventListener("DOMContentLoaded", () => {
   const $statusMode = document.getElementById("status-mode");
   const $statusFile = document.getElementById("status-file");
   const $statusScale = document.getElementById("status-scale");
+  const $statusCounts = document.getElementById("status-counts");
+  const $statusError = document.getElementById("status-error");
   const $btnDetect = document.getElementById("btn-detect");
   const $btnCrop = document.getElementById("btn-crop");
 
@@ -986,7 +1025,9 @@ window.addEventListener("DOMContentLoaded", () => {
     $statusScale.textContent = imageCanvas.image
       ? `Skala: ${imageCanvas.scale.toFixed(3)}`
       : "Skala: —";
-    // Liczniki + komunikat błędu w kroku 15+17 — placeholder.
+    const c = imageCanvas.lastCounts;
+    $statusCounts.textContent = `Wycinek A: ${c.A} wierszy | Wycinek B: ${c.B} wierszy`;
+    $statusError.textContent = imageCanvas.lastError ?? "";
   };
 
   const updateActionButtons = () => {
