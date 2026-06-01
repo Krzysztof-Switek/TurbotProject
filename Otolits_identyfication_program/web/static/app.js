@@ -391,6 +391,7 @@ class FileBrowser {
   setOutputDir(path) {
     this.outputDir = path;
     this.$outputDirCurrent.textContent = path === "" ? "(root)" : path;
+    this.onSelectOutputDir(path);
   }
 
   getOutputDir() { return this.outputDir; }
@@ -891,8 +892,20 @@ class ImageCanvas {
         ctx.fillText(label, x, y);
       }
     }
-    // (warstwa 7 statusbar — w bootstrap czyta this.lastCounts / lastError;
-    //  warstwa 8 komunikat błędu na canvasie — krok 17)
+
+    // Warstwa 8: komunikat błędu walidacji na canvasie (gdy etykiety pominięte)
+    if (error !== null) {
+      ctx.font = "bold 16px sans-serif";
+      ctx.textBaseline = "bottom";
+      const x = 20;
+      const y = this.canvas.height - 20;
+      ctx.lineWidth = 4;
+      ctx.strokeStyle = "#000000";
+      ctx.strokeText(error, x, y);
+      ctx.fillStyle = "#FF6666";
+      ctx.fillText(error, x, y);
+      ctx.textBaseline = "top"; // reset domyślny
+    }
 
     // Powiadom listenera (statusbar / przyciski) po każdym renderze.
     this.onStateChange();
@@ -1032,8 +1045,17 @@ window.addEventListener("DOMContentLoaded", () => {
 
   const updateActionButtons = () => {
     const hasImage = !!imageCanvas.image;
+    const hasOutputDir = fileBrowser.getOutputDir() !== null;
+    const hasValidRows = imageCanvas.lastError === null && imageCanvas.rows.length > 0;
     $btnDetect.disabled = !hasImage;
-    $btnCrop.disabled = !hasImage || !fileBrowser.getOutputDir();
+    $btnCrop.disabled = !hasImage || !hasOutputDir || !hasValidRows;
+    $btnCrop.title = !hasOutputDir
+      ? "Wybierz katalog wyjściowy w sidebarze"
+      : !hasValidRows && imageCanvas.lastError
+        ? imageCanvas.lastError
+        : !hasValidRows
+          ? "Dodaj przynajmniej jeden wiersz (klawisz 'l')"
+          : "Wytnij boxy i zapisz pliki (Enter)";
   };
 
   const updateModeButtons = () => {
@@ -1059,6 +1081,9 @@ window.addEventListener("DOMContentLoaded", () => {
       } catch (e) {
         alert(`Błąd ładowania obrazu: ${e.message}`);
       }
+    },
+    onSelectOutputDir: () => {
+      updateActionButtons();
     },
   });
   fileBrowser.cdTo("");
