@@ -60,6 +60,12 @@ class CropRequest(BaseModel):
         default=True,
         description="Czy zapisać adnotację YOLO `.txt` obok zdjęcia (pseudo-labelling).",
     )
+    um_per_px: Optional[float] = Field(
+        default=None,
+        gt=0,
+        description="Skala oryginalnego obrazu w μm/px (z kalibracji per-katalog). "
+                    "Gdy podane, na każdym wycinku rysowany jest pasek skali.",
+    )
 
 
 # ---------- response schemas ----------
@@ -141,9 +147,9 @@ def crop(req: CropRequest) -> CropResponse:
     if err is not None:
         raise HTTPException(status_code=400, detail=err)
 
-    # 6. Crop + save
+    # 6. Crop + save (z opcjonalnym paskiem skali jeśli um_per_px podane)
     cropper = ImageCropper(output_dir=str(output_abs), image_loader=loaded.loader)
-    crop_results = cropper.crop_and_save(original, rows, [])
+    crop_results = cropper.crop_and_save(original, rows, [], um_per_px=req.um_per_px)
 
     # 7. Pseudo-labelling
     annotations_rel: Optional[str] = None

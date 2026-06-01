@@ -3,6 +3,12 @@ import cv2
 import numpy as np
 from typing import List, Tuple, Optional, Dict, TYPE_CHECKING
 from dataclasses import dataclass
+from PIL import Image, ImageDraw, ImageFont
+
+
+# "Ładne" długości paska skali w μm — wybór z tej listy daje czytelne podpisy
+# typu "500 μm", "1 mm" itp. Standardowe wartości w mikroskopii.
+_NICE_UM_VALUES = [10, 20, 50, 100, 200, 500, 1000, 2000, 5000, 10000, 20000]
 
 if TYPE_CHECKING:
     from image_loader import ImageLoader
@@ -140,6 +146,88 @@ def _split_auto_by_largest_gap(sorted_rows):
     return a_rows, b_rows
 
 
+def _pick_nice_um(width_px: int, um_per_px: float) -> float:
+    """Wybiera 'ładną' długość paska skali (μm) dla wycinka.
+
+    Cel: pasek zajmuje ~25% szerokości, max 40% (żeby zostawić margines).
+    Zwraca 0 gdy żadna wartość z `_NICE_UM_VALUES` się nie mieści (wycinek
+    skrajnie mały) — wtedy pasek nie jest rysowany.
+    """
+    if um_per_px <= 0 or width_px <= 0:
+        return 0.0
+    width_um = width_px * um_per_px
+    target_um = 0.25 * width_um
+    max_um = 0.40 * width_um
+    fitting = [v for v in _NICE_UM_VALUES if v <= max_um]
+    if not fitting:
+        return 0.0
+    return min(fitting, key=lambda v: abs(v - target_um))
+
+
+def draw_scale_bar(image: np.ndarray, um_per_px: float) -> np.ndarray:
+    """Rysuje pasek skali w prawym dolnym rogu wycinka.
+
+    Wygląd: biały prostokąt z czarnym outline + biały tekst z czarnym outline
+    nad paskiem. PIL używany dla rendering Unicode (μm).
+    Zwraca nowy obraz (bez modyfikacji wejścia).
+    """
+    if um_per_px is None or um_per_px <= 0:
+        return image
+
+    h, w = image.shape[:2]
+    nice_um = _pick_nice_um(w, um_per_px)
+    if nice_um <= 0:
+        return image
+
+    bar_len_px = max(1, int(nice_um / um_per_px))
+
+    # Etykieta: ≥1000 μm → mm, inaczej μm.
+    if nice_um >= 1000:
+        mm_val = nice_um / 1000
+        label = f"{mm_val:g} mm"
+    else:
+        label = f"{int(nice_um)} μm"
+
+    # Konwersja BGR (cv2) → RGB → PIL.
+    pil_img = Image.fromarray(cv2.cvtColor(image, cv2.COLOR_BGR2RGB))
+    draw = ImageDraw.Draw(pil_img)
+
+    margin = 15
+    bar_height = 5
+    x_right = w - margin
+    x_left = x_right - bar_len_px
+    y_bar_bottom = h - margin
+    y_bar_top = y_bar_bottom - bar_height
+
+    try:
+        font = ImageFont.truetype("arial.ttf", 20)
+    except IOError:
+        font = ImageFont.load_default()
+
+    bbox = draw.textbbox((0, 0), label, font=font)
+    tw = bbox[2] - bbox[0]
+    th = bbox[3] - bbox[1]
+    text_x = x_right - tw
+    text_y = y_bar_top - th - 6
+
+    # Pasek z czarnym outline.
+    draw.rectangle(
+        [x_left - 1, y_bar_top - 1, x_right + 1, y_bar_bottom + 1],
+        fill=(0, 0, 0),
+    )
+    draw.rectangle(
+        [x_left, y_bar_top, x_right, y_bar_bottom],
+        fill=(255, 255, 255),
+    )
+
+    # Tekst z czarnym outline (4 offsety + biały środek).
+    for dx, dy in [(-1, -1), (-1, 1), (1, -1), (1, 1), (-1, 0), (1, 0), (0, -1), (0, 1)]:
+        draw.text((text_x + dx, text_y + dy), label, font=font, fill=(0, 0, 0))
+    draw.text((text_x, text_y), label, font=font, fill=(255, 255, 255))
+
+    return cv2.cvtColor(np.array(pil_img), cv2.COLOR_RGB2BGR)
+
+
 @dataclass
 class CropResult:
     image: np.ndarray
@@ -155,8 +243,13 @@ class ImageCropper:
         self.image_loader = image_loader
         os.makedirs(output_dir, exist_ok=True)
 
-    def crop_and_save(self, original_image: np.ndarray, rows: List['RowLine'], boxes: List['BoundingBox']) -> List[
-        CropResult]:
+    def crop_and_save(
+        self,
+        original_image: np.ndarray,
+        rows: List['RowLine'],
+        boxes: List['BoundingBox'],
+        um_per_px: Optional[float] = None,
+    ) -> List[CropResult]:
         if original_image is None:
             print("Brak obrazu do wycięcia")
             return []
@@ -203,6 +296,10 @@ class ImageCropper:
                     cropped = original_image[y1:y2, x1:x2].copy()
                     if cropped.size == 0:
                         continue
+
+                    # Pasek skali (opcjonalny — gdy backend dostał um_per_px).
+                    if um_per_px is not None and um_per_px > 0:
+                        cropped = draw_scale_bar(cropped, um_per_px)
 
                     # New filename format
                     filename = f"{original_filename}{prefix}_{box_idx}.png"
