@@ -1367,16 +1367,20 @@ window.addEventListener("DOMContentLoaded", () => {
     $btnClearRows.disabled = !hasImage;
     $btnReload.disabled = !hasImage;
     $btnDetect.disabled = !hasImage;
-    $btnCrop.disabled = !hasImage || !hasOutputDir || !hasValidRows || !hasCalibration;
-    $btnCrop.title = !hasCalibration
-      ? "Wykonaj kalibrację skali (klawisz 'k')"
+    // Crop wymaga: image + destination + ≥1 valid row. Calibration opcjonalna
+    // (bez niej zapisujemy wycinki bez paska skali).
+    $btnCrop.disabled = !hasImage || !hasOutputDir || !hasValidRows;
+    $btnCrop.title = !hasImage
+      ? "Open an image first"
       : !hasOutputDir
-        ? "Wybierz katalog wyjściowy w sidebarze"
+        ? "Choose destination folder in sidebar"
         : !hasValidRows && imageCanvas.lastError
           ? imageCanvas.lastError
           : !hasValidRows
-            ? "Dodaj przynajmniej jeden wiersz (klawisz 'l')"
-            : "Wytnij boxy i zapisz pliki (Enter)";
+            ? "Add at least one row (key 'l')"
+            : !hasCalibration
+              ? "Crop and save (scale bar omitted — calibrate to add it)"
+              : "Crop and save (Enter)";
   };
 
   const updateModeButtons = () => {
