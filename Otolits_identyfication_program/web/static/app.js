@@ -637,6 +637,15 @@ class ImageCanvas {
       }
       this.render();
     }
+
+    // Auto-detect: od razu wykryj otolity + zgrupuj na wiersze.
+    try {
+      const res = await Api.detect(path);
+      this.applyDetectedBoxes(res.boxes);
+      this.autoDetectRows();
+    } catch (e) {
+      console.warn("Auto-detect po loadImage nieudany:", e.message);
+    }
   }
 
   setMode(mode) {
@@ -654,6 +663,48 @@ class ImageCanvas {
       this.boxes.push(new BBox(d.x1, d.y1, d.x2, d.y2, { label: d.label ?? "auto" }));
     }
     this._reassignAllBoxesToRows();
+    this.render();
+  }
+
+  /**
+   * Auto-detekcja wierszy z grupowania boxów po Y-środku.
+   * Sortuje boxy po y_center, dzieli na grupy gdy gap > medianHeight × 0.5,
+   * dla każdej grupy tworzy Row z poziomą linią (Y = mediana y_center) i
+   * boxami z grupy. Nowe wiersze dorzucane do this.rows (przed nimi można
+   * mieć ręcznie utworzone).
+   */
+  autoDetectRows() {
+    if (this.boxes.length === 0) return;
+    // Posortuj boxy po centerY
+    const sortedBoxes = [...this.boxes].sort((a, b) => a.centerY - b.centerY);
+    const heights = sortedBoxes.map(b => b.height).sort((a, b) => a - b);
+    const medianHeight = heights[Math.floor(heights.length / 2)];
+    const gapThreshold = medianHeight * 0.5;
+
+    // Grupuj boxy w wiersze
+    const groups = [];
+    let currentGroup = [sortedBoxes[0]];
+    for (let i = 1; i < sortedBoxes.length; i++) {
+      const gap = sortedBoxes[i].centerY - sortedBoxes[i - 1].centerY;
+      if (gap > gapThreshold) {
+        groups.push(currentGroup);
+        currentGroup = [];
+      }
+      currentGroup.push(sortedBoxes[i]);
+    }
+    if (currentGroup.length > 0) groups.push(currentGroup);
+
+    // Dla każdej grupy: stwórz Row z linią poziomą Y = mediana(centerY).
+    for (const group of groups) {
+      const ys = group.map(b => b.centerY).sort((a, b) => a - b);
+      const medianY = ys[Math.floor(ys.length / 2)];
+      const minX = Math.min(...group.map(b => b.x1));
+      const maxX = Math.max(...group.map(b => b.x2));
+      const line = new RowLine([minX, medianY], [maxX, medianY]);
+      const row = new Row(line, { boxes: [] });
+      this._updateRowBoxes(row);
+      if (row.boxes.length > 0) this.rows.push(row);
+    }
     this.render();
   }
 
