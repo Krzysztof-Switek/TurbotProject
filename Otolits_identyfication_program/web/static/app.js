@@ -1135,7 +1135,8 @@ const KEY_TO_MODE = {
   r: Modes.RESIZE,
   d: Modes.DELETE,
   e: Modes.EDIT_LABEL,
-  k: Modes.CALIBRATE,
+  // Modes.CALIBRATE — celowo bez klawisza w tym etapie. Kalibracja
+  // zostanie zreorganizowana do osobnego sidebar workflow.
 };
 
 /** Wyciąga katalog z pełnej ścieżki pliku (relatywnej do DATA_ROOT). */
