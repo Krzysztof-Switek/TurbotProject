@@ -90,7 +90,7 @@ function computeRowLabels(rows) {
   if (total > 6) {
     return {
       labels: new Map(),
-      error: `BŁĄD: wykryto ${total} wierszy łącznie (max 6: po 3 na wycinek). Popraw wiersze ręcznie (usuń nadmiarowe linie).`,
+      error: `ERROR: detected ${total} rows total (max 6: up to 3 per compartment). Fix rows manually (delete extra lines).`,
     };
   }
 
@@ -101,7 +101,7 @@ function computeRowLabels(rows) {
   if (nA > 3 || nB > 3) {
     return {
       labels: new Map(),
-      error: `BŁĄD: wycinek A ma ${nA} wierszy, wycinek B ma ${nB} wierszy (max 3 na wycinek). Popraw wiersze ręcznie.`,
+      error: `ERROR: compartment A has ${nA} rows, compartment B has ${nB} rows (max 3 per compartment). Fix rows manually.`,
     };
   }
 
@@ -523,7 +523,7 @@ class FileBrowser {
       this._render();
     } catch (e) {
       console.error("listDir failed:", e);
-      alert(`Błąd ładowania katalogu '${path}': ${e.message}`);
+      alert(`Failed to load folder '${path}': ${e.message}`);
     }
   }
 
@@ -572,7 +572,7 @@ class FileBrowser {
     this.$dirs.innerHTML = "";
     if (data.parent !== null && data.parent !== undefined) {
       const li = document.createElement("li");
-      li.textContent = ".. (wyżej)";
+      li.textContent = ".. (up)";
       li.style.fontStyle = "italic";
       li.addEventListener("click", () => this.cdTo(data.parent));
       this.$dirs.appendChild(li);
@@ -618,7 +618,7 @@ class FileBrowser {
 
     const onOk = async () => {
       const name = nameInput.value.trim();
-      if (!name) { errorEl.textContent = "Podaj nazwę"; errorEl.hidden = false; return; }
+      if (!name) { errorEl.textContent = "Enter a name"; errorEl.hidden = false; return; }
       const path = this.currentPath === "" ? name : `${this.currentPath}/${name}`;
       try {
         await Api.mkdir(path);
@@ -722,7 +722,7 @@ class ImageCanvas {
     // dawały race condition: applyDetectedBoxes + autoDetectRows wykonywało
     // się 2× na wspólnym state → boxes/rows zdublowane.
     if (this._loadingImage) {
-      console.warn("[loadImage] juz w trakcie, ignoruje request dla", path);
+      console.warn("[loadImage] already in progress, ignoring request for", path);
       return;
     }
     this._loadingImage = true;
@@ -776,7 +776,7 @@ class ImageCanvas {
       try {
         this.calibration = await Api.getCalibration(newDir);
       } catch (e) {
-        console.warn("Nie udało się pobrać kalibracji:", e.message);
+        console.warn("Failed to fetch calibration:", e.message);
         this.calibration = null;
       }
       this.render();
@@ -786,10 +786,10 @@ class ImageCanvas {
     // (filtr artefaktów IQR → split A/B → klastrowanie wewnątrz każdego, max 3/grupa).
     try {
       const detectRes = await Api.detect(path);
-      console.log("[loadImage] /api/detect:", detectRes.boxes.length, "boxów");
+      console.log("[loadImage] /api/detect:", detectRes.boxes.length, "boxes");
       this.applyDetectedBoxes(detectRes.boxes);
       this.autoDetectRowsInCompartments();
-      console.log("[loadImage] auto-rows:", this.rows.length, "wierszy");
+      console.log("[loadImage] auto-rows:", this.rows.length, "rows");
     } catch (e) {
       console.error("[loadImage] Auto-detect FAILED:", e);
     }
@@ -830,7 +830,7 @@ class ImageCanvas {
     const prevRows = this.rows.length;
     this.rows = [];
     if (prevRows > 0) {
-      console.warn(`[autoDetectRowsInCompartments] reset ${prevRows} istniejących wierszy`);
+      console.warn(`[autoDetectRowsInCompartments] reset ${prevRows} existing rows`);
     }
 
     if (this.boxes.length === 0) {
@@ -1293,7 +1293,7 @@ function _runSmokeTests() {
 
   const failed = cases.filter(c => !c.pass);
   if (failed.length === 0) {
-    console.log("[smoke] computeRowLabels OK (%d/%d testów)", cases.length, cases.length);
+    console.log("[smoke] computeRowLabels OK (%d/%d tests)", cases.length, cases.length);
   } else {
     console.error("[smoke] computeRowLabels FAIL:", failed.map(f => f.name));
   }
@@ -1337,24 +1337,26 @@ window.addEventListener("DOMContentLoaded", () => {
   const $btnCrop = document.getElementById("btn-crop");
 
   const updateStatusBar = () => {
-    $statusMode.textContent = `Tryb: ${imageCanvas.mode}`;
-    $statusFile.textContent = `Plik: ${imageCanvas.imagePath ?? "—"}`;
+    $statusMode.textContent = `Mode: ${imageCanvas.mode}`;
+    $statusFile.textContent = `File: ${imageCanvas.imagePath ?? "—"}`;
     $statusScale.textContent = imageCanvas.image
-      ? `Skala obrazu: ${imageCanvas.scale.toFixed(3)}`
-      : "Skala obrazu: —";
+      ? `Image scale: ${imageCanvas.scale.toFixed(3)}`
+      : "Image scale: —";
     const c = imageCanvas.lastCounts;
-    $statusCounts.textContent = `Wycinek A: ${c.A} wierszy | Wycinek B: ${c.B} wierszy`;
+    $statusCounts.textContent = `Compartment A: ${c.A} rows | Compartment B: ${c.B} rows`;
     $statusError.textContent = imageCanvas.lastError ?? "";
 
-    // Kalibracja: μm/px + powiększenie + nazwa zdjęcia referencyjnego.
+    // Calibration: μm/px + magnification + reference image name.
     const calib = imageCanvas.calibration;
     if (calib) {
-      const mag = calib.magnification ? ` (${calib.magnification}` : " (";
-      const ref = calib.reference_image ? `${mag ? mag + ", ref: " : "ref: "}${calib.reference_image})` : ")";
-      $statusCalibration.textContent = `Kalibracja: ${calib.um_per_px.toFixed(3)} μm/px${calib.magnification || calib.reference_image ? ref : ""}`;
+      const parts = [];
+      if (calib.magnification) parts.push(calib.magnification);
+      if (calib.reference_image) parts.push(`ref: ${calib.reference_image}`);
+      const suffix = parts.length > 0 ? ` (${parts.join(", ")})` : "";
+      $statusCalibration.textContent = `Calibration: ${calib.um_per_px.toFixed(3)} μm/px${suffix}`;
       $statusCalibration.style.color = "";
     } else {
-      $statusCalibration.textContent = "Kalibracja: BRAK (klawisz k)";
+      $statusCalibration.textContent = "Calibration: NONE";
       $statusCalibration.style.color = "#ffaa44";
     }
   };
@@ -1410,7 +1412,7 @@ window.addEventListener("DOMContentLoaded", () => {
       try {
         await imageCanvas.loadImage(path);
       } catch (e) {
-        alert(`Błąd ładowania obrazu: ${e.message}`);
+        alert(`Image load error: ${e.message}`);
       }
     },
   });
@@ -1491,14 +1493,14 @@ window.addEventListener("DOMContentLoaded", () => {
     try {
       const res = await Api.crop(payload);
       const annot = res.annotations_path
-        ? `\nAdnotacje YOLO: ${res.annotations_path}`
+        ? `\nYOLO annotations: ${res.annotations_path}`
         : saveAnnotations
-          ? "\n(adnotacje pominięte — brak bboxów wycinków)"
-          : "\n(zapis adnotacji wyłączony)";
+          ? "\n(annotations skipped — no compartment bboxes)"
+          : "\n(annotations disabled)";
       alert(
-        `Zapisano ${res.saved.length} plików.\n` +
-        `Wycinek A: ${res.compartments.A} wierszy, ` +
-        `B: ${res.compartments.B} wierszy${annot}`
+        `Saved ${res.saved.length} files.\n` +
+        `Compartment A: ${res.compartments.A} rows, ` +
+        `B: ${res.compartments.B} rows${annot}`
       );
     } catch (e) {
       alert(`Crop: ${e.message}`);
@@ -1597,13 +1599,13 @@ window.addEventListener("DOMContentLoaded", () => {
     const onOk = async () => {
       const raw = parseFloat($length.value);
       if (!isFinite(raw) || raw <= 0) {
-        $error.textContent = "Podaj dodatnią długość";
+        $error.textContent = "Enter a positive length";
         $error.hidden = false;
         return;
       }
       const lengthUm = $unit.value === "mm" ? raw * 1000 : raw;
       if (!imageCanvas.imagePath) {
-        $error.textContent = "Najpierw wczytaj zdjęcie";
+        $error.textContent = "Load an image first";
         $error.hidden = false;
         return;
       }
@@ -1622,7 +1624,7 @@ window.addEventListener("DOMContentLoaded", () => {
         cleanup();
         imageCanvas.render();
       } catch (e) {
-        $error.textContent = `Błąd zapisu: ${e.message}`;
+        $error.textContent = `Save error: ${e.message}`;
         $error.hidden = false;
       }
     };

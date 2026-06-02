@@ -1,5 +1,5 @@
 <!DOCTYPE html>
-<html lang="pl">
+<html lang="en">
 <head>
   <meta charset="UTF-8">
   <title>Turbot — Otolith Annotation Tool</title>
@@ -7,13 +7,13 @@
 </head>
 <body>
   <div class="app">
-    <!-- Lewy panel: dwie nawigacje (source / destination) -->
+    <!-- Left panel: two navigations (source / destination) -->
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-section">
         <div class="sidebar-header">
           <span class="title">Source</span>
-          <button id="btn-refresh" title="Odśwież listę">↻</button>
-          <button id="btn-mkdir" title="Nowy katalog">📁</button>
+          <button id="btn-refresh" title="Refresh listing">↻</button>
+          <button id="btn-mkdir" title="New folder">📁</button>
         </div>
         <div class="breadcrumbs" id="breadcrumbs"></div>
         <ul class="dirs" id="dirs"></ul>
@@ -23,38 +23,38 @@
       <div class="sidebar-section">
         <div class="sidebar-header">
           <span class="title">Destination dir</span>
-          <button id="btn-dest-refresh" title="Odśwież listę">↻</button>
-          <button id="btn-dest-mkdir" title="Nowy katalog">📁</button>
+          <button id="btn-dest-refresh" title="Refresh listing">↻</button>
+          <button id="btn-dest-mkdir" title="New folder">📁</button>
         </div>
         <div class="output-dir-row">
-          <span id="output-dir-current" class="output-dir-current">(nie wybrano)</span>
+          <span id="output-dir-current" class="output-dir-current">(not selected)</span>
         </div>
         <div class="breadcrumbs" id="dest-breadcrumbs"></div>
         <ul class="dirs" id="dest-dirs"></ul>
-        <button id="btn-set-output" class="primary" style="width:100%;margin-top:8px" title="Ustaw bieżący katalog jako destination">save here</button>
+        <button id="btn-set-output" class="primary" style="width:100%;margin-top:8px" title="Set current folder as destination">save here</button>
       </div>
     </aside>
 
-    <!-- Centrum: canvas + status bar -->
+    <!-- Center: canvas + status bar -->
     <main class="main">
       <div class="topbar">
         <div class="modes" id="modes">
-          <button class="mode-btn" data-mode="ADD_BOX"  title="Dodaj box (b)">b · add box</button>
-          <button class="mode-btn" data-mode="ADD_LINE" title="Dodaj linię (l)">l · add line</button>
-          <button class="mode-btn" data-mode="MOVE"     title="Przesuń (v)">v · move</button>
-          <button class="mode-btn" data-mode="RESIZE"   title="Zmień rozmiar (r)">r · resize</button>
-          <button class="mode-btn" data-mode="DELETE"   title="Usuń (d)">d · del</button>
-          <button class="mode-btn" data-mode="EDIT_LABEL" title="Edytuj etykietę wiersza (e)">e · edit label</button>
+          <button class="mode-btn" data-mode="ADD_BOX"  title="Add box (b)">b · add box</button>
+          <button class="mode-btn" data-mode="ADD_LINE" title="Add line (l)">l · add line</button>
+          <button class="mode-btn" data-mode="MOVE"     title="Move (v)">v · move</button>
+          <button class="mode-btn" data-mode="RESIZE"   title="Resize (r)">r · resize</button>
+          <button class="mode-btn" data-mode="DELETE"   title="Delete (d)">d · del</button>
+          <button class="mode-btn" data-mode="EDIT_LABEL" title="Edit row label (e)">e · edit label</button>
         </div>
         <div class="actions">
-          <button id="btn-clear-rows" disabled title="Wyczyść wiersze i komunikat błędu (zachowuje boxy)">🧹 Clear rows</button>
-          <button id="btn-reload" disabled title="Wczytaj obraz od nowa (powtórny YOLO detect — przywróci usunięte boxy)">↻ Reload</button>
+          <button id="btn-clear-rows" disabled title="Clear rows and error message (boxes preserved)">🧹 Clear rows</button>
+          <button id="btn-reload" disabled title="Reload image (re-run YOLO detect — restores removed boxes)">↻ Reload</button>
           <button id="btn-detect" disabled>Auto-detect (YOLO)</button>
-          <label class="checkbox" title="Po crop zapisz plik .txt obok zdjęcia źródłowego (format YOLO) z bboxami wycinków A/B. Pseudo-labelling dla treningu YOLO compartments.">
+          <label class="checkbox" title="After crop, save .txt next to source image (YOLO format) with A/B compartment bboxes. Pseudo-labelling for future YOLO compartments training.">
             <input type="checkbox" id="chk-save-annotations" checked>
-            Zapisuj adnotacje
+            Save annotations
           </label>
-          <button id="btn-crop" disabled>Wytnij i zapisz (Enter)</button>
+          <button id="btn-crop" disabled>Crop and save (Enter)</button>
         </div>
       </div>
 
@@ -63,70 +63,70 @@
       </div>
 
       <div class="statusbar" id="statusbar">
-        <span id="status-mode">Tryb: —</span>
-        <span id="status-file">Plik: —</span>
-        <span id="status-scale">Skala obrazu: —</span>
-        <span id="status-calibration">Kalibracja: —</span>
-        <span id="status-counts">Wycinek A: 0 wierszy | Wycinek B: 0 wierszy</span>
+        <span id="status-mode">Mode: —</span>
+        <span id="status-file">File: —</span>
+        <span id="status-scale">Image scale: —</span>
+        <span id="status-calibration">Calibration: —</span>
+        <span id="status-counts">Compartment A: 0 rows | Compartment B: 0 rows</span>
         <span id="status-error" class="error"></span>
       </div>
     </main>
   </div>
 
-  <!-- Modal: edycja etykiety wiersza (EDIT_LABEL) -->
+  <!-- Modal: row label edit (EDIT_LABEL) -->
   <div class="modal-backdrop" id="modal-backdrop" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="modal-title">
-      <h2 id="modal-title">Etykieta wiersza</h2>
-      <label for="modal-compartment">Wycinek:</label>
+      <h2 id="modal-title">Row label</h2>
+      <label for="modal-compartment">Compartment:</label>
       <select id="modal-compartment">
-        <option value="auto">auto (geometria)</option>
+        <option value="auto">auto (geometry)</option>
         <option value="A">A</option>
         <option value="B">B</option>
       </select>
       <p class="modal-error" id="modal-error" hidden></p>
       <div class="modal-buttons">
-        <button id="modal-cancel">Anuluj (Esc)</button>
+        <button id="modal-cancel">Cancel (Esc)</button>
         <button id="modal-ok" class="primary">OK (Enter)</button>
       </div>
     </div>
   </div>
 
-  <!-- Modal: kalibracja skali (po 2 klikach na linijce) -->
+  <!-- Modal: scale calibration (after 2 clicks on a ruler) -->
   <div class="modal-backdrop" id="calib-backdrop" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="calib-title">
-      <h2 id="calib-title">Kalibracja skali</h2>
+      <h2 id="calib-title">Scale calibration</h2>
       <p style="font-size:12px;color:#aaa;margin:0 0 12px">
-        Podaj rzeczywistą długość odcinka między klikniętymi punktami.
-        <br>Dystans w preview: <span id="calib-dist-preview">—</span> px
+        Enter the real-world length of the segment between the clicked points.
+        <br>Preview distance: <span id="calib-dist-preview">—</span> px
       </p>
-      <label for="calib-length">Długość rzeczywista:</label>
+      <label for="calib-length">Real length:</label>
       <div style="display:flex;gap:6px;margin-bottom:12px">
-        <input type="number" id="calib-length" step="any" placeholder="np. 2500" style="flex:1">
+        <input type="number" id="calib-length" step="any" placeholder="e.g. 2500" style="flex:1">
         <select id="calib-unit">
           <option value="um">μm</option>
           <option value="mm">mm</option>
         </select>
       </div>
-      <label for="calib-magnification">Powiększenie (opcjonalne):</label>
-      <input type="text" id="calib-magnification" placeholder="np. 4x" style="margin-bottom:12px">
+      <label for="calib-magnification">Magnification (optional):</label>
+      <input type="text" id="calib-magnification" placeholder="e.g. 4x" style="margin-bottom:12px">
       <p class="modal-error" id="calib-error" hidden></p>
       <div class="modal-buttons">
-        <button id="calib-cancel">Anuluj</button>
-        <button id="calib-ok" class="primary">Zapisz kalibrację</button>
+        <button id="calib-cancel">Cancel</button>
+        <button id="calib-ok" class="primary">Save calibration</button>
       </div>
     </div>
   </div>
 
-  <!-- Modal: prompt mkdir -->
+  <!-- Modal: mkdir prompt -->
   <div class="modal-backdrop" id="mkdir-backdrop" hidden>
     <div class="modal" role="dialog" aria-modal="true" aria-labelledby="mkdir-title">
-      <h2 id="mkdir-title">Nowy katalog</h2>
-      <label for="mkdir-name">Nazwa:</label>
-      <input type="text" id="mkdir-name" placeholder="np. crops_2026_06_01">
+      <h2 id="mkdir-title">New folder</h2>
+      <label for="mkdir-name">Name:</label>
+      <input type="text" id="mkdir-name" placeholder="e.g. crops_2026_06_01">
       <p class="modal-error" id="mkdir-error" hidden></p>
       <div class="modal-buttons">
-        <button id="mkdir-cancel">Anuluj</button>
-        <button id="mkdir-ok" class="primary">Utwórz</button>
+        <button id="mkdir-cancel">Cancel</button>
+        <button id="mkdir-ok" class="primary">Create</button>
       </div>
     </div>
   </div>
