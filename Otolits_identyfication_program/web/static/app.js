@@ -661,14 +661,13 @@ class ImageCanvas {
       this.render();
     }
 
-    // Auto-detect: od razu wykryj otolity + zgrupuj na wiersze.
+    // Auto-detect: od razu wykryj otolity. Wiersze NIE są auto-tworzone —
+    // user rysuje je ręcznie ('l') lub w przyszłości użyjemy klastrowania
+    // wewnątrz wycinków A/B (na razie wycinki nie są auto-detected).
     try {
-      console.log("[loadImage] Auto-detect dla", path);
       const detectRes = await Api.detect(path);
       console.log("[loadImage] /api/detect:", detectRes.boxes.length, "boxów");
       this.applyDetectedBoxes(detectRes.boxes);
-      this.autoDetectRows();
-      console.log("[loadImage] Po autoDetectRows:", this.rows.length, "wierszy");
     } catch (e) {
       console.error("[loadImage] Auto-detect FAILED:", e);
     }
@@ -1182,6 +1181,7 @@ window.addEventListener("DOMContentLoaded", () => {
   const $statusCalibration = document.getElementById("status-calibration");
   const $statusCounts = document.getElementById("status-counts");
   const $statusError = document.getElementById("status-error");
+  const $btnReload = document.getElementById("btn-reload");
   const $btnDetect = document.getElementById("btn-detect");
   const $btnCrop = document.getElementById("btn-crop");
 
@@ -1213,6 +1213,7 @@ window.addEventListener("DOMContentLoaded", () => {
     const hasOutputDir = destBrowser.getOutputDir() !== null;
     const hasValidRows = imageCanvas.lastError === null && imageCanvas.rows.length > 0;
     const hasCalibration = !!imageCanvas.calibration;
+    $btnReload.disabled = !hasImage;
     $btnDetect.disabled = !hasImage;
     $btnCrop.disabled = !hasImage || !hasOutputDir || !hasValidRows || !hasCalibration;
     $btnCrop.title = !hasCalibration
@@ -1278,6 +1279,17 @@ window.addEventListener("DOMContentLoaded", () => {
   // Mode buttons
   document.querySelectorAll(".mode-btn").forEach(btn => {
     btn.addEventListener("click", () => imageCanvas.setMode(btn.dataset.mode));
+  });
+
+  // Reload button — wczytaj ten sam obraz od nowa (czyści boxy i wiersze,
+  // usuwa komunikat błędu walidacji, ponownie wywołuje auto-detect).
+  $btnReload.addEventListener("click", async () => {
+    if (!imageCanvas.imagePath) return;
+    try {
+      await imageCanvas.loadImage(imageCanvas.imagePath);
+    } catch (e) {
+      alert(`Reload: ${e.message}`);
+    }
   });
 
   // Auto-detect button
