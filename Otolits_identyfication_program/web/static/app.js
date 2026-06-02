@@ -717,6 +717,23 @@ class ImageCanvas {
   // ---------- public API ----------
 
   async loadImage(path) {
+    // Guard: jeśli loadImage jest już w trakcie (user kliknął obraz 2× lub
+    // szybko zmienił obraz), ignoruj kolejne wywołanie. Równoległe loadImage
+    // dawały race condition: applyDetectedBoxes + autoDetectRows wykonywało
+    // się 2× na wspólnym state → boxes/rows zdublowane.
+    if (this._loadingImage) {
+      console.warn("[loadImage] juz w trakcie, ignoruje request dla", path);
+      return;
+    }
+    this._loadingImage = true;
+    try {
+      await this._loadImageImpl(path);
+    } finally {
+      this._loadingImage = false;
+    }
+  }
+
+  async _loadImageImpl(path) {
     const res = await fetch(Api.previewUrl(path));
     if (!res.ok) {
       const body = await res.json().catch(() => ({}));
@@ -808,10 +825,24 @@ class ImageCanvas {
    *    to OK, są wtedy w wycinku; outliers Y są poza zasięgiem linii poziomej).
    */
   autoDetectRowsInCompartments() {
-    if (this.boxes.length === 0) return;
+    // Idempotentne: zerujemy this.rows ZAWSZE — guard przeciw duplikacji gdy
+    // funkcja zostanie wywołana 2x (race condition równoległych loadImage).
+    const prevRows = this.rows.length;
+    this.rows = [];
+    if (prevRows > 0) {
+      console.warn(`[autoDetectRowsInCompartments] reset ${prevRows} istniejących wierszy`);
+    }
+
+    if (this.boxes.length === 0) {
+      this.render();
+      return;
+    }
 
     const filtered = filterOutlierBoxes(this.boxes);
-    if (filtered.length < 1) return;
+    if (filtered.length < 1) {
+      this.render();
+      return;
+    }
 
     // Split A/B (largest gap Y wśród filtered)
     let aBoxes = filtered;
