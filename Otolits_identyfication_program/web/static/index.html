@@ -7,11 +7,11 @@
 </head>
 <body>
   <div class="app">
-    <!-- Lewy panel: nawigacja katalogów + lista obrazów -->
+    <!-- Lewy panel: dwie nawigacje (source / destination) -->
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-section">
         <div class="sidebar-header">
-          <span class="title">Źródło</span>
+          <span class="title">Source</span>
           <button id="btn-refresh" title="Odśwież listę">↻</button>
           <button id="btn-mkdir" title="Nowy katalog">📁</button>
         </div>
@@ -22,12 +22,16 @@
 
       <div class="sidebar-section">
         <div class="sidebar-header">
-          <span class="title">Wyjście</span>
+          <span class="title">Destination dir</span>
+          <button id="btn-dest-refresh" title="Odśwież listę">↻</button>
+          <button id="btn-dest-mkdir" title="Nowy katalog">📁</button>
         </div>
         <div class="output-dir-row">
           <span id="output-dir-current" class="output-dir-current">(nie wybrano)</span>
-          <button id="btn-set-output" title="Ustaw jako wyjście z bieżącego katalogu">tu</button>
         </div>
+        <div class="breadcrumbs" id="dest-breadcrumbs"></div>
+        <ul class="dirs" id="dest-dirs"></ul>
+        <button id="btn-set-output" class="primary" style="width:100%;margin-top:8px" title="Ustaw bieżący katalog jako destination">save here</button>
       </div>
     </aside>
 

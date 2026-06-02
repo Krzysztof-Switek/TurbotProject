@@ -371,25 +371,44 @@ class ApiError extends Error {
 // FileBrowser — nawigacja po katalogach + lista obrazów + mkdir
 // ============================================================================
 class FileBrowser {
-  constructor({ onSelectImage, onSelectOutputDir } = {}) {
+  constructor({
+    onSelectImage,
+    onSelectOutputDir,
+    elemIds = {},
+    showImages = true,
+  } = {}) {
     this.currentPath = "";
     this.currentDirCache = null;
+    this.showImages = showImages;
     this.onSelectImage = onSelectImage ?? (() => {});
     this.onSelectOutputDir = onSelectOutputDir ?? (() => {});
 
-    this.$breadcrumbs = document.getElementById("breadcrumbs");
-    this.$dirs = document.getElementById("dirs");
-    this.$images = document.getElementById("images");
-    this.$outputDirCurrent = document.getElementById("output-dir-current");
-    this.$btnRefresh = document.getElementById("btn-refresh");
-    this.$btnMkdir = document.getElementById("btn-mkdir");
-    this.$btnSetOutput = document.getElementById("btn-set-output");
+    // Domyślne ID elementów dla głównego browsera (source);
+    // destination browser podaje swoje (dest-*).
+    const ids = {
+      breadcrumbs: "breadcrumbs",
+      dirs: "dirs",
+      images: "images",
+      outputDirCurrent: "output-dir-current",
+      btnRefresh: "btn-refresh",
+      btnMkdir: "btn-mkdir",
+      btnSetOutput: "btn-set-output",
+      ...elemIds,
+    };
+
+    this.$breadcrumbs = document.getElementById(ids.breadcrumbs);
+    this.$dirs = document.getElementById(ids.dirs);
+    this.$images = ids.images ? document.getElementById(ids.images) : null;
+    this.$outputDirCurrent = ids.outputDirCurrent ? document.getElementById(ids.outputDirCurrent) : null;
+    this.$btnRefresh = document.getElementById(ids.btnRefresh);
+    this.$btnMkdir = document.getElementById(ids.btnMkdir);
+    this.$btnSetOutput = ids.btnSetOutput ? document.getElementById(ids.btnSetOutput) : null;
 
     this.outputDir = null;
 
-    this.$btnRefresh.addEventListener("click", () => this.refresh());
-    this.$btnMkdir.addEventListener("click", () => this._promptMkdir());
-    this.$btnSetOutput.addEventListener("click", () => this.setOutputDir(this.currentPath));
+    this.$btnRefresh?.addEventListener("click", () => this.refresh());
+    this.$btnMkdir?.addEventListener("click", () => this._promptMkdir());
+    this.$btnSetOutput?.addEventListener("click", () => this.setOutputDir(this.currentPath));
   }
 
   async cdTo(path) {
@@ -408,7 +427,9 @@ class FileBrowser {
 
   setOutputDir(path) {
     this.outputDir = path;
-    this.$outputDirCurrent.textContent = path === "" ? "(root)" : path;
+    if (this.$outputDirCurrent) {
+      this.$outputDirCurrent.textContent = path === "" ? "(root)" : path;
+    }
     this.onSelectOutputDir(path);
   }
 
@@ -460,19 +481,21 @@ class FileBrowser {
       this.$dirs.appendChild(li);
     });
 
-    // Obrazy
-    this.$images.innerHTML = "";
-    data.images.forEach(img => {
-      const li = document.createElement("li");
-      li.textContent = `${img.name} (${formatBytes(img.size)})`;
-      const fullPath = data.path === "" ? img.name : `${data.path}/${img.name}`;
-      li.addEventListener("click", () => {
-        Array.from(this.$images.children).forEach(c => c.classList.remove("selected"));
-        li.classList.add("selected");
-        this.onSelectImage(fullPath);
+    // Obrazy (pomiń dla destination browsera — showImages=false / brak $images).
+    if (this.$images && this.showImages) {
+      this.$images.innerHTML = "";
+      data.images.forEach(img => {
+        const li = document.createElement("li");
+        li.textContent = `${img.name} (${formatBytes(img.size)})`;
+        const fullPath = data.path === "" ? img.name : `${data.path}/${img.name}`;
+        li.addEventListener("click", () => {
+          Array.from(this.$images.children).forEach(c => c.classList.remove("selected"));
+          li.classList.add("selected");
+          this.onSelectImage(fullPath);
+        });
+        this.$images.appendChild(li);
       });
-      this.$images.appendChild(li);
-    });
+    }
   }
 
   async _promptMkdir() {
@@ -1184,7 +1207,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
   const updateActionButtons = () => {
     const hasImage = !!imageCanvas.image;
-    const hasOutputDir = fileBrowser.getOutputDir() !== null;
+    const hasOutputDir = destBrowser.getOutputDir() !== null;
     const hasValidRows = imageCanvas.lastError === null && imageCanvas.rows.length > 0;
     const hasCalibration = !!imageCanvas.calibration;
     $btnDetect.disabled = !hasImage;
@@ -1215,8 +1238,14 @@ window.addEventListener("DOMContentLoaded", () => {
     },
   });
 
-  // FileBrowser → loadImage
+  // Source: nawigacja po katalogach + lista obrazów.
   const fileBrowser = new FileBrowser({
+    showImages: true,
+    elemIds: {
+      // Source nie ma własnego "Save here" ani info o destination dir.
+      btnSetOutput: null,
+      outputDirCurrent: null,
+    },
     onSelectImage: async (path) => {
       try {
         await imageCanvas.loadImage(path);
@@ -1224,11 +1253,24 @@ window.addEventListener("DOMContentLoaded", () => {
         alert(`Błąd ładowania obrazu: ${e.message}`);
       }
     },
-    onSelectOutputDir: () => {
-      updateActionButtons();
-    },
   });
   fileBrowser.cdTo("");
+
+  // Destination: osobna nawigacja katalogów + przycisk "Save here".
+  const destBrowser = new FileBrowser({
+    showImages: false,
+    elemIds: {
+      breadcrumbs: "dest-breadcrumbs",
+      dirs: "dest-dirs",
+      images: null,
+      btnRefresh: "btn-dest-refresh",
+      btnMkdir: "btn-dest-mkdir",
+      btnSetOutput: "btn-set-output",
+      outputDirCurrent: "output-dir-current",
+    },
+    onSelectOutputDir: () => updateActionButtons(),
+  });
+  destBrowser.cdTo("");
 
   // Mode buttons
   document.querySelectorAll(".mode-btn").forEach(btn => {
@@ -1263,7 +1305,7 @@ window.addEventListener("DOMContentLoaded", () => {
 
   // Crop button
   $btnCrop.addEventListener("click", async () => {
-    const outputDir = fileBrowser.getOutputDir();
+    const outputDir = destBrowser.getOutputDir();
     if (outputDir === null || !imageCanvas.imagePath) return;
     const saveAnnotations = $chkSaveAnnotations.checked;
     const payload = imageCanvas.toCropPayload(outputDir, saveAnnotations);
