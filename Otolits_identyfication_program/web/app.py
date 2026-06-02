@@ -62,6 +62,21 @@ app = FastAPI(
     lifespan=lifespan,
 )
 
+
+@app.middleware("http")
+async def no_cache_for_frontend(request, call_next):
+    """Wyłącz cache przeglądarki dla statycznego frontendu (HTML/JS/CSS).
+
+    Dev-friendly: każde F5 widzi najświeższy kod. W produkcji można
+    zastąpić ETag/Last-Modified, ale dla single-user dev to wystarcza.
+    """
+    response = await call_next(request)
+    p = request.url.path
+    if p == "/" or p.endswith((".js", ".css", ".html")):
+        response.headers["Cache-Control"] = "no-store, must-revalidate"
+    return response
+
+
 # API routery.
 app.include_router(fs_router.router)
 app.include_router(image_router.router)

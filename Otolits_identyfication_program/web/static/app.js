@@ -663,11 +663,14 @@ class ImageCanvas {
 
     // Auto-detect: od razu wykryj otolity + zgrupuj na wiersze.
     try {
-      const res = await Api.detect(path);
-      this.applyDetectedBoxes(res.boxes);
+      console.log("[loadImage] Auto-detect dla", path);
+      const detectRes = await Api.detect(path);
+      console.log("[loadImage] /api/detect:", detectRes.boxes.length, "boxów");
+      this.applyDetectedBoxes(detectRes.boxes);
       this.autoDetectRows();
+      console.log("[loadImage] Po autoDetectRows:", this.rows.length, "wierszy");
     } catch (e) {
-      console.warn("Auto-detect po loadImage nieudany:", e.message);
+      console.error("[loadImage] Auto-detect FAILED:", e);
     }
   }
 
