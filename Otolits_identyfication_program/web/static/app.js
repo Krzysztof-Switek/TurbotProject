@@ -151,6 +151,65 @@ function computeCompartmentBboxes(rows, { margin = 40, labels = null } = {}) {
 }
 
 /**
+ * Filtr artefaktów: odrzuca boxy daleko od głównej masy (po centerY).
+ * Używamy IQR: zostaw boxy w [Q1 - k·IQR, Q3 + k·IQR].
+ * <4 boxes → bez filtrowania (za mało żeby liczyć IQR sensownie).
+ */
+function filterOutlierBoxes(boxes, kIqr = 1.5) {
+  if (boxes.length < 4) return [...boxes];
+  const ys = boxes.map(b => b.centerY).slice().sort((a, b) => a - b);
+  const q1 = ys[Math.floor(ys.length * 0.25)];
+  const q3 = ys[Math.floor(ys.length * 0.75)];
+  const iqr = q3 - q1;
+  const lower = q1 - kIqr * iqr;
+  const upper = q3 + kIqr * iqr;
+  return boxes.filter(b => b.centerY >= lower && b.centerY <= upper);
+}
+
+/**
+ * Klastrowanie boxów w wiersze poziome wewnątrz jednej grupy (np. wycinek).
+ * Sekwencyjne: nowy klaster gdy gap między kolejnymi centerY > medianHeight·0.5.
+ * Trim do `maxRows` największych klastrów (wg liczby boxów), re-sort po Y.
+ * Zwraca tablicę RowLine (linia pozioma na medianie Y klastra, od minX do maxX).
+ */
+function clusterRowsInGroup(boxes, maxRows = 3) {
+  if (boxes.length === 0) return [];
+
+  const sorted = [...boxes].sort((a, b) => a.centerY - b.centerY);
+  const heights = boxes.map(b => b.height).slice().sort((a, b) => a - b);
+  const medianHeight = heights[Math.floor(heights.length / 2)];
+  const gapThreshold = Math.max(1, medianHeight * 0.5);
+
+  // Klastrowanie sekwencyjne
+  const groups = [[sorted[0]]];
+  for (let i = 1; i < sorted.length; i++) {
+    const gap = sorted[i].centerY - sorted[i - 1].centerY;
+    if (gap > gapThreshold) {
+      groups.push([sorted[i]]);
+    } else {
+      groups[groups.length - 1].push(sorted[i]);
+    }
+  }
+
+  // Trim do maxRows: zostaw `maxRows` największych (wg liczby boxów)
+  let selected = groups;
+  if (groups.length > maxRows) {
+    selected = [...groups].sort((a, b) => b.length - a.length).slice(0, maxRows);
+    // re-sort po Y żeby zachować top→bottom
+    selected.sort((a, b) => a[0].centerY - b[0].centerY);
+  }
+
+  // Stwórz RowLine dla każdego klastra
+  return selected.map(group => {
+    const ys = group.map(b => b.centerY).slice().sort((a, b) => a - b);
+    const medianY = ys[Math.floor(ys.length / 2)];
+    const minX = Math.min(...group.map(b => b.x1));
+    const maxX = Math.max(...group.map(b => b.x2));
+    return new RowLine([minX, medianY], [maxX, medianY]);
+  });
+}
+
+/**
  * Wycinki A/B bezpośrednio z boxów (bez wierszy).
  * Używane jako fallback w render() gdy rows.length === 0 ale są boxy
  * — żeby user widział ramki natychmiast po auto-detect.
@@ -706,13 +765,14 @@ class ImageCanvas {
       this.render();
     }
 
-    // Auto-detect: od razu wykryj otolity. Wiersze NIE są auto-tworzone —
-    // user rysuje je ręcznie ('l') lub w przyszłości użyjemy klastrowania
-    // wewnątrz wycinków A/B (na razie wycinki nie są auto-detected).
+    // Auto-detect boxy + automatyczne wiersze wewnątrz wycinków A/B
+    // (filtr artefaktów IQR → split A/B → klastrowanie wewnątrz każdego, max 3/grupa).
     try {
       const detectRes = await Api.detect(path);
       console.log("[loadImage] /api/detect:", detectRes.boxes.length, "boxów");
       this.applyDetectedBoxes(detectRes.boxes);
+      this.autoDetectRowsInCompartments();
+      console.log("[loadImage] auto-rows:", this.rows.length, "wierszy");
     } catch (e) {
       console.error("[loadImage] Auto-detect FAILED:", e);
     }
@@ -737,40 +797,47 @@ class ImageCanvas {
   }
 
   /**
-   * Auto-detekcja wierszy z grupowania boxów po Y-środku.
-   * Sortuje boxy po y_center, dzieli na grupy gdy gap > medianHeight × 0.5,
-   * dla każdej grupy tworzy Row z poziomą linią (Y = mediana y_center) i
-   * boxami z grupy. Nowe wiersze dorzucane do this.rows (przed nimi można
-   * mieć ręcznie utworzone).
+   * Auto-detekcja wierszy WEWNĄTRZ wycinków A/B.
+   *
+   * Pipeline:
+   * 1. filterOutlierBoxes — odsiej boxy daleko od głównej masy (artefakty).
+   * 2. Podziel filtered na A/B przez largest gap Y między centroidami.
+   * 3. clusterRowsInGroup dla A i B (max 3 wiersze per wycinek).
+   * 4. Utwórz Row dla każdej linii, _updateRowBoxes (re-przypisuje WSZYSTKIE
+   *    boxy, więc artefakty mogą trafić do wiersza jeśli linia przecina box —
+   *    to OK, są wtedy w wycinku; outliers Y są poza zasięgiem linii poziomej).
    */
-  autoDetectRows() {
+  autoDetectRowsInCompartments() {
     if (this.boxes.length === 0) return;
-    // Posortuj boxy po centerY
-    const sortedBoxes = [...this.boxes].sort((a, b) => a.centerY - b.centerY);
-    const heights = sortedBoxes.map(b => b.height).sort((a, b) => a - b);
-    const medianHeight = heights[Math.floor(heights.length / 2)];
-    const gapThreshold = medianHeight * 0.5;
 
-    // Grupuj boxy w wiersze
-    const groups = [];
-    let currentGroup = [sortedBoxes[0]];
-    for (let i = 1; i < sortedBoxes.length; i++) {
-      const gap = sortedBoxes[i].centerY - sortedBoxes[i - 1].centerY;
-      if (gap > gapThreshold) {
-        groups.push(currentGroup);
-        currentGroup = [];
+    const filtered = filterOutlierBoxes(this.boxes);
+    if (filtered.length < 1) return;
+
+    // Split A/B (largest gap Y wśród filtered)
+    let aBoxes = filtered;
+    let bBoxes = [];
+    if (filtered.length >= 2) {
+      const sorted = [...filtered].sort((a, b) => a.centerY - b.centerY);
+      const centroids = sorted.map(b => b.centerY);
+      let maxGap = -Infinity;
+      let splitIdx = -1;
+      for (let i = 0; i < centroids.length - 1; i++) {
+        const gap = centroids[i + 1] - centroids[i];
+        if (gap > maxGap) { maxGap = gap; splitIdx = i; }
+        else if (gap === maxGap) { splitIdx = i; }
       }
-      currentGroup.push(sortedBoxes[i]);
+      aBoxes = sorted.slice(0, splitIdx + 1);
+      bBoxes = sorted.slice(splitIdx + 1);
     }
-    if (currentGroup.length > 0) groups.push(currentGroup);
 
-    // Dla każdej grupy: stwórz Row z linią poziomą Y = mediana(centerY).
-    for (const group of groups) {
-      const ys = group.map(b => b.centerY).sort((a, b) => a - b);
-      const medianY = ys[Math.floor(ys.length / 2)];
-      const minX = Math.min(...group.map(b => b.x1));
-      const maxX = Math.max(...group.map(b => b.x2));
-      const line = new RowLine([minX, medianY], [maxX, medianY]);
+    // Klastruj wewnątrz każdej grupy (max 3 wiersze)
+    const lines = [
+      ...clusterRowsInGroup(aBoxes, 3),
+      ...clusterRowsInGroup(bBoxes, 3),
+    ];
+
+    // Stwórz Row dla każdej linii
+    for (const line of lines) {
       const row = new Row(line, { boxes: [] });
       this._updateRowBoxes(row);
       if (row.boxes.length > 0) this.rows.push(row);
