@@ -150,6 +150,51 @@ function computeCompartmentBboxes(rows, { margin = 40, labels = null } = {}) {
   return result;
 }
 
+/**
+ * Wycinki A/B bezpośrednio z boxów (bez wierszy).
+ * Używane jako fallback w render() gdy rows.length === 0 ale są boxy
+ * — żeby user widział ramki natychmiast po auto-detect.
+ *
+ * Algorytm: sort po centerY → largest gap → split A (góra) / B (dół).
+ * Edge case: 1 box → tylko A. <1 box → {}.
+ */
+function computeCompartmentBboxesFromBoxes(boxes, margin = 40) {
+  if (boxes.length === 0) return {};
+  if (boxes.length === 1) {
+    const b = boxes[0];
+    return { A: [b.x1 - margin, b.y1 - margin, b.x2 + margin, b.y2 + margin] };
+  }
+
+  const sorted = [...boxes].sort((a, b) => a.centerY - b.centerY);
+  const centroids = sorted.map(b => b.centerY);
+
+  let maxGap = -Infinity;
+  let splitIdx = -1;
+  for (let i = 0; i < centroids.length - 1; i++) {
+    const gap = centroids[i + 1] - centroids[i];
+    if (gap > maxGap) { maxGap = gap; splitIdx = i; }
+    else if (gap === maxGap) { splitIdx = i; }
+  }
+
+  const groups = {
+    A: sorted.slice(0, splitIdx + 1),
+    B: sorted.slice(splitIdx + 1),
+  };
+
+  const result = {};
+  for (const label of ["A", "B"]) {
+    const g = groups[label];
+    if (g.length === 0) continue;
+    result[label] = [
+      Math.min(...g.map(b => b.x1)) - margin,
+      Math.min(...g.map(b => b.y1)) - margin,
+      Math.max(...g.map(b => b.x2)) + margin,
+      Math.max(...g.map(b => b.y2)) + margin,
+    ];
+  }
+  return result;
+}
+
 // ============================================================================
 // BBox — port z bounding_box.BoundingBox
 // ============================================================================
@@ -944,9 +989,16 @@ class ImageCanvas {
     const counts = { A: 0, B: 0 };
     for (const lbl of labels.values()) counts[lbl[0]]++;
     this.lastCounts = counts;
-    const bboxes = error === null
-      ? computeCompartmentBboxes(this.rows, { labels })
-      : {};
+    // Ramki wycinków A/B:
+    // - z wierszy (jeśli są i walidacja OK) - precyzyjny bbox z labels
+    // - fallback z boxów bezpośrednio (gdy brak wierszy ale są boxy)
+    //   - user widzi A/B od razu po auto-detect, przed rysowaniem linii
+    let bboxes = {};
+    if (this.rows.length > 0 && error === null) {
+      bboxes = computeCompartmentBboxes(this.rows, { labels });
+    } else if (this.rows.length === 0 && this.boxes.length > 0) {
+      bboxes = computeCompartmentBboxesFromBoxes(this.boxes);
+    }
 
     // Warstwa 2: boxy
     for (const box of this.boxes) {
