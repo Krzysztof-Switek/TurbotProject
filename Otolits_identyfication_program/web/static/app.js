@@ -1300,6 +1300,7 @@ window.addEventListener("DOMContentLoaded", () => {
   const $statusCalibration = document.getElementById("status-calibration");
   const $statusCounts = document.getElementById("status-counts");
   const $statusError = document.getElementById("status-error");
+  const $btnClearRows = document.getElementById("btn-clear-rows");
   const $btnReload = document.getElementById("btn-reload");
   const $btnDetect = document.getElementById("btn-detect");
   const $btnCrop = document.getElementById("btn-crop");
@@ -1332,6 +1333,7 @@ window.addEventListener("DOMContentLoaded", () => {
     const hasOutputDir = destBrowser.getOutputDir() !== null;
     const hasValidRows = imageCanvas.lastError === null && imageCanvas.rows.length > 0;
     const hasCalibration = !!imageCanvas.calibration;
+    $btnClearRows.disabled = !hasImage;
     $btnReload.disabled = !hasImage;
     $btnDetect.disabled = !hasImage;
     $btnCrop.disabled = !hasImage || !hasOutputDir || !hasValidRows || !hasCalibration;
@@ -1400,8 +1402,16 @@ window.addEventListener("DOMContentLoaded", () => {
     btn.addEventListener("click", () => imageCanvas.setMode(btn.dataset.mode));
   });
 
-  // Reload button — wczytaj ten sam obraz od nowa (czyści boxy i wiersze,
-  // usuwa komunikat błędu walidacji, ponownie wywołuje auto-detect).
+  // Clear rows — soft refresh: zeruje wiersze + komunikat błędu, BOXY
+  // zachowane (twoje ręczne usunięcia/edycje boxów pozostają nietknięte).
+  $btnClearRows.addEventListener("click", () => {
+    imageCanvas.rows = [];
+    imageCanvas.lastError = null;
+    imageCanvas.render();
+  });
+
+  // Reload — hard refresh: loadImage z re-detect YOLO. Przywraca usunięte
+  // boxy, generuje nowe auto-rows. Użyj gdy chcesz zacząć od zera.
   $btnReload.addEventListener("click", async () => {
     if (!imageCanvas.imagePath) return;
     try {
