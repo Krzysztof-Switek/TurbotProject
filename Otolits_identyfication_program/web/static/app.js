@@ -79,8 +79,12 @@ function splitCompartments(sortedRows) {
 /**
  * Port z compute_row_labels.
  * Zwraca { labels: Map<Row, "A_n">, error: string|null }.
+ *
+ * swap=true zamienia litery wycinków A↔B na końcu (górny wycinek staje się B,
+ * dolny A) — używane przez przycisk "swap slices". Walidacja (>6 / >3) jest
+ * niezależna od swap (symetryczna), więc liczona przed zamianą.
  */
-function computeRowLabels(rows) {
+function computeRowLabels(rows, swap = false) {
   // sort top→bottom, pomijając wiersze bez boxów (jak Python comprehension)
   const sortedRows = rows
     .filter(r => r.boxes && r.boxes.length > 0)
@@ -107,10 +111,11 @@ function computeRowLabels(rows) {
 
   const labels = new Map();
   for (const [label, rowsInC] of [["A", aRows], ["B", bRows]]) {
+    const effLabel = swap ? (label === "A" ? "B" : "A") : label;
     const n = rowsInC.length;
     rowsInC.forEach((row, offset) => {
       const rowNum = 3 - (n - 1 - offset);
-      labels.set(row, `${label}_${rowNum}`);
+      labels.set(row, `${effLabel}_${rowNum}`);
     });
   }
   return { labels, error: null };
@@ -697,6 +702,7 @@ class ImageCanvas {
     this.lastLabels = new Map();  // Map<Row, "A_n"> z ostatniego renderu
     this.lastCounts = { A: 0, B: 0 };
     this.lastError = null;        // err z computeRowLabels, do statusbara
+    this.swapAB = false;          // toggle "swap slices" — zamiana liter A↔B
 
     // Kalibracja per-katalog (zachowywana między obrazami w tym samym katalogu).
     this.calibration = null;      // { um_per_px, magnification, reference_image, ... }
@@ -766,6 +772,7 @@ class ImageCanvas {
     this.tempBox = null;
     this.lastError = null;
     this.calibrationPoints = [];
+    this.swapAB = false;  // reset swap per obraz — każdy obraz oceniany od nowa
 
     this.canvas.width = img.width;
     this.canvas.height = img.height;
@@ -882,6 +889,7 @@ class ImageCanvas {
       output_dir: outputDir,
       scale: this.scale,
       save_annotations: !!saveAnnotations,
+      swap_compartments: this.swapAB,
       um_per_px: this.calibration ? this.calibration.um_per_px : null,
       rows: this.rows
         .filter(r => r.boxes.length > 0)
@@ -922,7 +930,12 @@ class ImageCanvas {
 
   _eventCoords(e) {
     const rect = this.canvas.getBoundingClientRect();
-    return [e.clientX - rect.left, e.clientY - rect.top];
+    // Canvas jest skalowany przez CSS (object-fit: contain), więc rozmiar
+    // wyświetlany (rect) != rozmiar wewnętrzny (canvas.width/height).
+    // Przeliczamy współrzędne kliknięcia na piksele wewnętrzne canvasu.
+    const sx = this.canvas.width / rect.width;
+    const sy = this.canvas.height / rect.height;
+    return [(e.clientX - rect.left) * sx, (e.clientY - rect.top) * sy];
   }
 
   _onMouseDown(e) {
@@ -1081,7 +1094,7 @@ class ImageCanvas {
     ctx.drawImage(this.image, 0, 0);
 
     // Oblicz etykiety + ramki + liczniki (cache do statusbara).
-    const { labels, error } = computeRowLabels(this.rows);
+    const { labels, error } = computeRowLabels(this.rows, this.swapAB);
     this.lastLabels = labels;
     this.lastError = error;
     const counts = { A: 0, B: 0 };
@@ -1331,6 +1344,7 @@ window.addEventListener("DOMContentLoaded", () => {
   const $statusCalibration = document.getElementById("status-calibration");
   const $statusCounts = document.getElementById("status-counts");
   const $statusError = document.getElementById("status-error");
+  const $btnSwap = document.getElementById("btn-swap");
   const $btnClearRows = document.getElementById("btn-clear-rows");
   const $btnReload = document.getElementById("btn-reload");
   const $btnDetect = document.getElementById("btn-detect");
@@ -1366,6 +1380,8 @@ window.addEventListener("DOMContentLoaded", () => {
     const hasOutputDir = destBrowser.getOutputDir() !== null;
     const hasValidRows = imageCanvas.lastError === null && imageCanvas.rows.length > 0;
     const hasCalibration = !!imageCanvas.calibration;
+    $btnSwap.disabled = !hasImage;
+    $btnSwap.classList.toggle("active", imageCanvas.swapAB);
     $btnClearRows.disabled = !hasImage;
     $btnReload.disabled = !hasImage;
     $btnDetect.disabled = !hasImage;
@@ -1437,6 +1453,14 @@ window.addEventListener("DOMContentLoaded", () => {
   // Mode buttons
   document.querySelectorAll(".mode-btn").forEach(btn => {
     btn.addEventListener("click", () => imageCanvas.setMode(btn.dataset.mode));
+  });
+
+  // Swap slices — toggle zamiany liter wycinków A↔B (górny↔dolny). Wpływa na
+  // etykiety wierszy, kolory ramek, liczniki i prefiks nazw plików przy cropie.
+  $btnSwap.addEventListener("click", () => {
+    if (!imageCanvas.image) return;
+    imageCanvas.swapAB = !imageCanvas.swapAB;
+    imageCanvas.render();
   });
 
   // Clear rows — soft refresh: zeruje wiersze + komunikat błędu, BOXY
@@ -1652,7 +1676,11 @@ window.addEventListener("DOMContentLoaded", () => {
     if (!backdrop.hidden || !mkdirBackdrop.hidden) return;
 
     const key = e.key.toLowerCase();
-    if (KEY_TO_MODE[key]) {
+    if (key === "w") {
+      // Swap slices — toggle (nie tryb), więc poza KEY_TO_MODE.
+      e.preventDefault();
+      $btnSwap.click();
+    } else if (KEY_TO_MODE[key]) {
       e.preventDefault();
       imageCanvas.setMode(KEY_TO_MODE[key]);
     } else if (e.key === "Escape") {

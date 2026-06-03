@@ -18,7 +18,7 @@ if TYPE_CHECKING:
     from input_handler import InputHandler
 
 
-def compute_row_labels(rows) -> Tuple[Dict[int, str], Optional[str]]:
+def compute_row_labels(rows, swap: bool = False) -> Tuple[Dict[int, str], Optional[str]]:
     """Wyznacza etykiety (np. "A_1", "B_3") dla wszystkich wierszy.
 
     Zwraca krotkę (labels_by_row_id, error_msg):
@@ -28,6 +28,9 @@ def compute_row_labels(rows) -> Tuple[Dict[int, str], Optional[str]]:
 
     Algorytm: sort top→bottom → walidacja total → split na A/B przez largest
     gap Y → walidacja per wycinek → numerowanie "od dołu" w obrębie wycinka.
+
+    swap=True zamienia litery wycinków A↔B na końcu (przycisk "swap slices" w UI).
+    Walidacja jest symetryczna, więc liczona przed zamianą.
     """
     sorted_rows = sorted(
         (r for r in rows if getattr(r, 'boxes', None)),
@@ -53,10 +56,11 @@ def compute_row_labels(rows) -> Tuple[Dict[int, str], Optional[str]]:
 
     labels: Dict[int, str] = {}
     for label, rows_in_c in (('A', a_rows), ('B', b_rows)):
+        eff_label = ('B' if label == 'A' else 'A') if swap else label
         n = len(rows_in_c)
         for offset, row in enumerate(rows_in_c):
             row_num = 3 - (n - 1 - offset)
-            labels[id(row)] = f"{label}_{row_num}"
+            labels[id(row)] = f"{eff_label}_{row_num}"
     return labels, None
 
 
@@ -249,6 +253,7 @@ class ImageCropper:
         rows: List['RowLine'],
         boxes: List['BoundingBox'],
         um_per_px: Optional[float] = None,
+        swap: bool = False,
     ) -> List[CropResult]:
         if original_image is None:
             print("Brak obrazu do wycięcia")
@@ -260,7 +265,7 @@ class ImageCropper:
         original_filename = os.path.splitext(os.path.basename(original_path))[0] if original_path else "image"
 
         # Wyznacz etykiety dla wszystkich wierszy (logika wspólna z UI).
-        labels, err = compute_row_labels(rows)
+        labels, err = compute_row_labels(rows, swap=swap)
         if err is not None:
             print(f"{err} Anuluję zapis.")
             return []

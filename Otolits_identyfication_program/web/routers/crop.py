@@ -60,6 +60,11 @@ class CropRequest(BaseModel):
         default=True,
         description="Czy zapisać adnotację YOLO `.txt` obok zdjęcia (pseudo-labelling).",
     )
+    swap_compartments: bool = Field(
+        default=False,
+        description="Zamiana liter wycinków A↔B (przycisk 'swap slices' w UI). "
+                    "Wpływa na prefiks nazw plików i liczniki; nie zmienia adnotacji .txt.",
+    )
     um_per_px: Optional[float] = Field(
         default=None,
         gt=0,
@@ -143,13 +148,15 @@ def crop(req: CropRequest) -> CropResponse:
         )
 
     # 5. Walidacja semantyczna przez compute_row_labels (>6 globalnie / >3 per wycinek)
-    labels, err = compute_row_labels(rows)
+    labels, err = compute_row_labels(rows, swap=req.swap_compartments)
     if err is not None:
         raise HTTPException(status_code=400, detail=err)
 
     # 6. Crop + save (z opcjonalnym paskiem skali jeśli um_per_px podane)
     cropper = ImageCropper(output_dir=str(output_abs), image_loader=loaded.loader)
-    crop_results = cropper.crop_and_save(original, rows, [], um_per_px=req.um_per_px)
+    crop_results = cropper.crop_and_save(
+        original, rows, [], um_per_px=req.um_per_px, swap=req.swap_compartments
+    )
 
     # 7. Pseudo-labelling
     annotations_rel: Optional[str] = None

@@ -157,13 +157,22 @@ select {
 
 .canvas-wrap {
   flex: 1;
-  overflow: auto;
+  overflow: hidden;
   background: #111;
   position: relative;
+  display: flex;
+  align-items: center;
+  justify-content: center;
 }
 canvas {
   display: block;
-  /* Backend rozmiar = oryginal_dim * scale; CSS = native size, brak skalowania */
+  /* Canvas renderuje w natywnej rozdzielczości (canvas.width/height), ale CSS
+     skaluje wyświetlanie do rozmiaru kontenera z zachowaniem proporcji.
+     Downscale only — małe zdjęcia nie są rozciągane powyżej natywnego rozmiaru.
+     UWAGA: _eventCoords() w app.js przelicza współrzędne myszy o ten skalar. */
+  max-width: 100%;
+  max-height: 100%;
+  object-fit: contain;
 }
 
 .statusbar {
