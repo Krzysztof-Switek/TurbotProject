@@ -319,28 +319,14 @@ _FastAPI app — entry point dla uvicorn._
 
 _Konfiguracja aplikacji webowej — odczyt env vars z domyślnymi._
 
+- `def _parse_allowed_roots(raw: str) -> dict[str, Path]`
+  - Parsuje 'Nazwa=ścieżka;Nazwa2=ścieżka2' → {nazwa: Path}. Puste/niepełne pomija.
 - `def describe() -> str`
   - Tekstowy dump konfiguracji do logów startupu — sanity check.
 
 ## `Otolits_identyfication_program/web/routers/__init__.py`
 
 _(no top-level classes/functions)_
-
-## `Otolits_identyfication_program/web/routers/calibration.py`
-
-_API endpointy kalibracji skali (μm/px) per katalog._
-
-- `def _calibration_to_response(c: calibration_service.Calibration) -> CalibrationResponse`
-- `def get_calibration(dir: str=Query('', description='Katalog relatywny do DATA_ROOT'))`
-  - Zwraca kalibrację dla katalogu lub null (200 z body=null) jeśli brak.
-- `def post_calibration(req: SaveRequest)`
-  - Zapisuje kalibrację dla katalogu.
-
-### class `CalibrationResponse(BaseModel)`
-
-
-### class `SaveRequest(BaseModel)`
-
 
 ## `Otolits_identyfication_program/web/routers/crop.py`
 
@@ -414,39 +400,49 @@ _API endpoint do pobrania obrazu (preview, przeskalowanego do MAX_PREVIEW_PX)._
 - `def preview(path: str=Query(..., description='Ścieżka pliku relatywna do DATA_ROOT')) -> Response`
   - Zwraca obraz preview (PNG, BGR przez OpenCV) przeskalowany do `MAX_PREVIEW_PX`.
 
+## `Otolits_identyfication_program/web/routers/scales.py`
+
+_API biblioteki nazwanych skal (presetów μm/px)._
+
+- `def _to_response(p: scales_service.ScalePreset) -> ScaleResponse`
+- `def list_scales() -> list[ScaleResponse]`
+  - Zwraca wszystkie zapisane skale (posortowane po nazwie).
+- `async def upload_photo(file: UploadFile=File(...)) -> UploadResponse`
+  - Wgrywa zdjęcie wzorca; zapisuje w SCALES_DIR; zwraca jego ścieżkę relatywną.
+- `def create_scale(req: SaveScaleRequest) -> ScaleResponse`
+  - Tworzy/edytuje preset skali. Liczy μm/px do oryginału z surowych danych.
+- `def delete_scale(slug: str) -> dict`
+  - Usuwa preset (+ kopię zdjęcia wzorca).
+
+### class `ScaleResponse(BaseModel)`
+
+
+### class `UploadResponse(BaseModel)`
+
+
+### class `SaveScaleRequest(BaseModel)`
+
+
 ## `Otolits_identyfication_program/web/services/__init__.py`
 
 _(no top-level classes/functions)_
 
-## `Otolits_identyfication_program/web/services/calibration.py`
-
-_Kalibracja skali (μm/px) per katalog — sidecar `calibration.json`._
-
-- `def _calibration_path(rel_dir: str) -> Path`
-  - Lokalizacja sidecar JSON. Rzuca PermissionError przy path traversal.
-- `def load(rel_dir: str) -> Optional[Calibration]`
-  - Wczytuje kalibrację z `<rel_dir>/calibration.json`. None jeśli brak.
-- `def save(rel_dir: str, um_per_px: float, magnification: str, reference_image: str, p1: tuple[float, float], p2: tuple[float, float], length_um: float) -> Calibration`
-  - Zapisuje kalibrację do `<rel_dir>/calibration.json`. Nadpisuje istniejącą.
-
-### class `Calibration`
-_Pełne dane kalibracji + metadane do wyświetlenia w UI / logu._
-
-- `def to_dict(self) -> dict`
-- `def from_dict(cls, data: dict) -> 'Calibration'`
-
 ## `Otolits_identyfication_program/web/services/fs_browser.py`
 
-_Bezpieczna nawigacja po katalogach w obrębie DATA_ROOT._
+_Bezpieczna nawigacja po katalogach w obrębie dozwolonych rootów._
 
+- `def _resolvable_roots() -> dict[str, Path]`
+  - Wszystkie roots dające się rozwiązać: nawigacyjne + zarezerwowany `_scales`.
+- `def _split_root(path: str) -> tuple[str, str]`
+  - 'Root/sub/dir' → ('Root', 'sub/dir'); 'Root' → ('Root', ''); '' → ('', '').
 - `def safe_resolve(rel_path: str) -> Path`
-  - Resolve relatywnej ścieżki do absolutnej z guardem przeciw path traversal.
+  - Resolve ścieżki `<Root>/...` do absolutnej z guardem przeciw path traversal.
 - `def to_rel(abs_path: Path) -> str`
-  - Konwersja absolutnej ścieżki na string relatywny do DATA_ROOT.
+  - Konwersja absolutnej ścieżki na `<RootName>/...` (relatywnie do roota).
 - `def list_dir(rel_path: str) -> ListResult`
-  - Lista podkatalogów + plików obrazowych w `rel_path` (relatywnym do DATA_ROOT).
+  - Lista podkatalogów + plików obrazowych.
 - `def make_dir(rel_path: str) -> Path`
-  - Tworzy katalog (z parentami) pod DATA_ROOT.
+  - Tworzy katalog (z parentami) pod wskazanym rootem.
 
 ### class `DirEntry`
 
@@ -471,6 +467,35 @@ _Wrapper na ImageLoader dla web — ładowanie pojedynczego obrazu po ścieżce_
 ### class `LoadedImage`
 _Wynik load_for_preview / load_for_detect._
 
+
+## `Otolits_identyfication_program/web/services/scales.py`
+
+_Biblioteka nazwanych skal (presetów μm/px) — zastępuje kalibrację per-katalog._
+
+- `def _to_um(value: float, unit: str) -> float`
+  - Przelicza długość rzeczywistą na mikrometry. Rzuca ValueError dla nieznanej jednostki.
+- `def slugify(name: str) -> str`
+  - Nazwa → bezpieczny slug (a-z0-9_). Rzuca ValueError gdy wynik pusty.
+- `def _scales_dir() -> Path`
+  - Zwraca SCALES_DIR, tworząc go gdy nie istnieje.
+- `def _preset_path(slug: str) -> Path`
+- `def list_scales() -> list[ScalePreset]`
+  - Wszystkie presety z SCALES_DIR, posortowane po nazwie. Zepsute pliki pomijane.
+- `def get_scale(slug: str) -> Optional[ScalePreset]`
+  - Wczytuje pojedynczy preset po slugu. None gdy brak/zepsuty.
+- `def save_uploaded_photo(orig_filename: str, data: bytes) -> str`
+  - Zapisuje wgrane zdjęcie wzorca pod unikalną nazwą w SCALES_DIR.
+- `def _delete_photo(source_filename: str) -> None`
+  - Usuwa kopię zdjęcia wzorca, jeśli leży bezpiecznie w SCALES_DIR.
+- `def save_scale(name: str, um_per_px: float, length_real: float, unit: str, magnification: str, source_filename: str, p1: tuple[float, float], p2: tuple[float, float], dist_preview_px: float) -> ScalePreset`
+  - Zapisuje preset (nadpisuje gdy slug już istnieje = edycja). Walidacja w środku.
+- `def delete_scale(slug: str) -> bool`
+  - Usuwa preset + jego kopię zdjęcia. Zwraca True jeśli plik JSON istniał.
+
+### class `ScalePreset`
+
+- `def to_dict(self) -> dict`
+- `def from_dict(cls, data: dict) -> 'ScalePreset'`
 
 ## `Picks_modification_scripts/Resize.py`
 

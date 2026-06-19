@@ -7,8 +7,18 @@
 </head>
 <body>
   <div class="app">
-    <!-- Left panel: two navigations (source / destination) -->
+    <!-- Left panel: scale library + two navigations (source / destination) -->
     <aside class="sidebar" id="sidebar">
+      <div class="sidebar-section">
+        <div class="sidebar-header">
+          <span class="title">Scale</span>
+          <button id="btn-new-scale" title="Create a new scale from a ruler photo">＋ New</button>
+          <button id="btn-del-scale" title="Delete selected scale">🗑</button>
+        </div>
+        <select id="scale-select" style="width:100%"></select>
+        <div id="scale-info" class="scale-info">No scale selected</div>
+      </div>
+
       <div class="sidebar-section">
         <div class="sidebar-header">
           <span class="title">Source</span>
@@ -67,7 +77,7 @@
         <span id="status-mode">Mode: —</span>
         <span id="status-file">File: —</span>
         <span id="status-scale">Image scale: —</span>
-        <span id="status-calibration">Calibration: —</span>
+        <span id="status-calibration">Scale: —</span>
         <span id="status-counts">Compartment A: 0 rows | Compartment B: 0 rows</span>
         <span id="status-error" class="error"></span>
       </div>
@@ -92,28 +102,52 @@
     </div>
   </div>
 
-  <!-- Modal: scale calibration (after 2 clicks on a ruler) -->
-  <div class="modal-backdrop" id="calib-backdrop" hidden>
-    <div class="modal" role="dialog" aria-modal="true" aria-labelledby="calib-title">
-      <h2 id="calib-title">Scale calibration</h2>
-      <p style="font-size:12px;color:#aaa;margin:0 0 12px">
-        Enter the real-world length of the segment between the clicked points.
-        <br>Preview distance: <span id="calib-dist-preview">—</span> px
+  <!-- Modal: new scale (upload ruler photo, click 2 points, name + real length) -->
+  <div class="modal-backdrop" id="scale-backdrop" hidden>
+    <div class="modal modal-scale" role="dialog" aria-modal="true" aria-labelledby="scale-title">
+      <h2 id="scale-title">New scale</h2>
+      <p class="hint">
+        Upload a photo of a ruler/scale bar, then click two points a known distance apart.
+        A scale is only valid for images shot at the <b>same magnification</b> as this photo.
       </p>
-      <label for="calib-length">Real length:</label>
+
+      <div class="dropzone" id="scale-dropzone">
+        <input type="file" id="scale-file" accept="image/png,image/jpeg" hidden>
+        <span id="scale-dropzone-label">Click to choose a photo, or drag &amp; drop</span>
+      </div>
+
+      <div class="scale-zoombar" id="scale-zoombar" hidden>
+        <button id="scale-zoom-out" type="button" title="Zoom out">−</button>
+        <span id="scale-zoom-label">100%</span>
+        <button id="scale-zoom-in" type="button" title="Zoom in">＋</button>
+        <button id="scale-zoom-fit" type="button" title="Fit to window">Fit</button>
+        <span class="zoom-hint">scroll to pan</span>
+      </div>
+      <div class="scale-canvas-wrap" id="scale-canvas-wrap" hidden>
+        <canvas id="scale-canvas"></canvas>
+      </div>
+      <p class="scale-measure-info">
+        Distance: <span id="scale-dist">—</span> px
+        <button id="scale-reset-points" type="button">reset points</button>
+      </p>
+
+      <label for="scale-name">Name:</label>
+      <input type="text" id="scale-name" placeholder="e.g. microscope_4x">
+      <label for="scale-length">Real length:</label>
       <div style="display:flex;gap:6px;margin-bottom:12px">
-        <input type="number" id="calib-length" step="any" placeholder="e.g. 2500" style="flex:1">
-        <select id="calib-unit">
-          <option value="um">μm</option>
+        <input type="number" id="scale-length" step="any" placeholder="e.g. 2" style="flex:1">
+        <select id="scale-unit">
+          <option value="cm">cm</option>
           <option value="mm">mm</option>
+          <option value="um">μm</option>
         </select>
       </div>
-      <label for="calib-magnification">Magnification (optional):</label>
-      <input type="text" id="calib-magnification" placeholder="e.g. 4x" style="margin-bottom:12px">
-      <p class="modal-error" id="calib-error" hidden></p>
+      <label for="scale-magnification">Magnification (optional):</label>
+      <input type="text" id="scale-magnification" placeholder="e.g. 4x" style="margin-bottom:12px">
+      <p class="modal-error" id="scale-error" hidden></p>
       <div class="modal-buttons">
-        <button id="calib-cancel">Cancel</button>
-        <button id="calib-ok" class="primary">Save calibration</button>
+        <button id="scale-cancel">Cancel</button>
+        <button id="scale-ok" class="primary">Save scale</button>
       </div>
     </div>
   </div>

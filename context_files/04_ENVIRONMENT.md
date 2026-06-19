@@ -66,6 +66,8 @@ names: ['Otolit']  # Nazwa klasy
 
 | Document | Top heading |
 |----------|-------------|
+| `audyty_plany/19.06_skala_plan_TO_DO.md` | Skala — audyt + plan TO-DO (2026-06-19) |
+| `audyty_plany/19.06_skala_podsumowanie_wdrozenia.md` | Skala — podsumowanie wdrożenia (2026-06-19) |
 | `audyty_plany/STAN_WEB_2026_06_02.md` | Stan projektu — sesja 2026-06-02 |
 | `audyty_plany/TO_DO_WEB.MD` | TO_DO_WEB — stan sesji + plan dalszych kroków |
 | `audyty_plany/kontekst_projektu.md` | TurbotProject — Kontekst projektu (dokument referencyjny) |

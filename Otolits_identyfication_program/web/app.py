@@ -16,11 +16,11 @@ from fastapi.staticfiles import StaticFiles
 
 from auto_detector import AutoDetector
 from web import config
-from web.routers import calibration as calibration_router
 from web.routers import crop as crop_router
 from web.routers import detect as detect_router
 from web.routers import fs as fs_router
 from web.routers import image as image_router
+from web.routers import scales as scales_router
 
 logger = logging.getLogger("turbot.web")
 logging.basicConfig(level=logging.INFO, format="%(asctime)s %(levelname)s %(name)s: %(message)s")
@@ -82,7 +82,7 @@ app.include_router(fs_router.router)
 app.include_router(image_router.router)
 app.include_router(detect_router.router)
 app.include_router(crop_router.router)
-app.include_router(calibration_router.router)
+app.include_router(scales_router.router)
 
 # Statyczny frontend (HTML/JS/CSS). Mountowany na końcu żeby nie przejmować
 # ścieżek /api/*. `html=True` — index.html wyświetla się na "/".

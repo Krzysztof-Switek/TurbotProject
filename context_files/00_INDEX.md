@@ -1,14 +1,14 @@
 # 00 — Context Index
 
-_Auto-generated 2026-06-19 13:26. Regenerate with `python generate_context.py`._
+_Auto-generated 2026-06-19 14:48. Regenerate with `python generate_context.py`._
 
 TurbotProject — otolith identification: an OpenCV/PIL/YOLO desktop app (`Otolits_identyfication_program/`) plus a FastAPI web app (`Otolits_identyfication_program/web/`). Helper scripts under `Picks_modification_scripts/` and `YOLO/`.
 
 ## Stats
 
-- Files indexed: **74** (32 Python)
-- Classes: **36** · Methods: **107** · Top-level functions: **40**
-- Total lines (indexed files): **8114**
+- Files indexed: **76** (32 Python)
+- Classes: **37** · Methods: **107** · Top-level functions: **52**
+- Total lines (indexed files): **9060**
 
 ## Entry points (`if __name__ == "__main__"`)
 

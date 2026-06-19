@@ -28,15 +28,15 @@ Each module and the project modules it imports.
 | `Otolits_identyfication_program.web.app` | `Otolits_identyfication_program.auto_detector` |
 | `Otolits_identyfication_program.web.config` | — |
 | `Otolits_identyfication_program.web.routers.__init__` | — |
-| `Otolits_identyfication_program.web.routers.calibration` | — |
 | `Otolits_identyfication_program.web.routers.crop` | `Otolits_identyfication_program.bounding_box`, `Otolits_identyfication_program.image_cropper`, `Otolits_identyfication_program.row_detector` |
 | `Otolits_identyfication_program.web.routers.detect` | — |
 | `Otolits_identyfication_program.web.routers.fs` | — |
 | `Otolits_identyfication_program.web.routers.image` | — |
+| `Otolits_identyfication_program.web.routers.scales` | — |
 | `Otolits_identyfication_program.web.services.__init__` | — |
-| `Otolits_identyfication_program.web.services.calibration` | — |
 | `Otolits_identyfication_program.web.services.fs_browser` | `Otolits_identyfication_program.web.config` |
 | `Otolits_identyfication_program.web.services.image_service` | `Otolits_identyfication_program.image_loader`, `Otolits_identyfication_program.web.config` |
+| `Otolits_identyfication_program.web.services.scales` | `Otolits_identyfication_program.web.config` |
 | `Picks_modification_scripts.Resize` | — |
 
 ## External libraries

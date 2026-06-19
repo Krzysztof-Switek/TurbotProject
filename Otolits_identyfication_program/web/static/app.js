@@ -20,7 +20,6 @@ const Modes = Object.freeze({
   RESIZE:     "RESIZE",
   DELETE:     "DELETE",
   EDIT_LABEL: "EDIT_LABEL",
-  CALIBRATE:  "CALIBRATE",
 });
 
 // ============================================================================
@@ -450,19 +449,32 @@ const Api = {
     return res.json();
   },
 
-  async getCalibration(dir) {
-    const url = `/api/calibration?dir=${encodeURIComponent(dir)}`;
-    const res = await fetch(url);
+  async listScales() {
+    const res = await fetch("/api/scales");
     if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => ({})));
-    return res.json();  // może być null
+    return res.json();
   },
 
-  async saveCalibration(payload) {
-    const res = await fetch("/api/calibration", {
+  async uploadScalePhoto(file) {
+    const fd = new FormData();
+    fd.append("file", file);
+    const res = await fetch("/api/scales/upload", { method: "POST", body: fd });
+    if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => ({})));
+    return res.json();  // { path }
+  },
+
+  async createScale(payload) {
+    const res = await fetch("/api/scales", {
       method: "POST",
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify(payload),
     });
+    if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => ({})));
+    return res.json();
+  },
+
+  async deleteScale(slug) {
+    const res = await fetch(`/api/scales/${encodeURIComponent(slug)}`, { method: "DELETE" });
     if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => ({})));
     return res.json();
   },
@@ -552,7 +564,7 @@ class FileBrowser {
     this.$breadcrumbs.innerHTML = "";
     const rootCrumb = document.createElement("span");
     rootCrumb.className = "crumb";
-    rootCrumb.textContent = "/";
+    rootCrumb.textContent = "⌂ roots";
     rootCrumb.addEventListener("click", () => this.cdTo(""));
     this.$breadcrumbs.appendChild(rootCrumb);
     if (data.path) {
@@ -605,6 +617,11 @@ class FileBrowser {
         this.$images.appendChild(li);
       });
     }
+
+    // Wirtualny top (lista rootów): nie da się tu utworzyć ani wybrać roota.
+    const atTop = this.currentPath === "";
+    if (this.$btnMkdir) this.$btnMkdir.disabled = atTop;
+    if (this.$btnSetOutput) this.$btnSetOutput.disabled = atTop;
   }
 
   async _promptMkdir() {
@@ -704,9 +721,9 @@ class ImageCanvas {
     this.lastError = null;        // err z computeRowLabels, do statusbara
     this.swapAB = false;          // toggle "swap slices" — zamiana liter A↔B
 
-    // Kalibracja per-katalog (zachowywana między obrazami w tym samym katalogu).
-    this.calibration = null;      // { um_per_px, magnification, reference_image, ... }
-    this.calibrationPoints = [];  // [[x,y]] w trybie CALIBRATE — 0, 1 lub 2 kliki
+    // Aktywna skala z biblioteki (globalna — wybierana w sidebarze, niezależna
+    // od katalogu/obrazu). null = brak skali (crop bez paska skali).
+    this.activeScale = null;      // { name, slug, um_per_px, magnification, ... }
 
     // Event handlers
     canvas.addEventListener("mousedown", (e) => this._onMouseDown(e));
@@ -758,10 +775,6 @@ class ImageCanvas {
       el.src = url;
     });
 
-    // Sprawdź czy zmienił się katalog — wtedy pobierz kalibrację nową.
-    const prevDir = this.imagePath ? dirOfPath(this.imagePath) : null;
-    const newDir = dirOfPath(path);
-
     this.imagePath = path;
     this.image = img;
     this.scale = scale;
@@ -771,23 +784,11 @@ class ImageCanvas {
     this.selection = this._emptySelection();
     this.tempBox = null;
     this.lastError = null;
-    this.calibrationPoints = [];
     this.swapAB = false;  // reset swap per obraz — każdy obraz oceniany od nowa
 
     this.canvas.width = img.width;
     this.canvas.height = img.height;
     this.render();
-
-    // Auto-fetch kalibracji (jeśli zmienił się katalog lub jeszcze nie mamy).
-    if (newDir !== prevDir || this.calibration === null) {
-      try {
-        this.calibration = await Api.getCalibration(newDir);
-      } catch (e) {
-        console.warn("Failed to fetch calibration:", e.message);
-        this.calibration = null;
-      }
-      this.render();
-    }
 
     // Auto-detect boxy + automatyczne wiersze wewnątrz wycinków A/B
     // (filtr artefaktów IQR → split A/B → klastrowanie wewnątrz każdego, max 3/grupa).
@@ -807,7 +808,6 @@ class ImageCanvas {
     this.mode = mode;
     this.selection = this._emptySelection();
     this.tempBox = null;
-    this.calibrationPoints = [];  // reset trybu kalibracji
     this.render();
   }
 
@@ -890,7 +890,7 @@ class ImageCanvas {
       scale: this.scale,
       save_annotations: !!saveAnnotations,
       swap_compartments: this.swapAB,
-      um_per_px: this.calibration ? this.calibration.um_per_px : null,
+      um_per_px: this.activeScale ? this.activeScale.um_per_px : null,
       rows: this.rows
         .filter(r => r.boxes.length > 0)
         .map(r => r.toJSON()),
@@ -993,15 +993,6 @@ class ImageCanvas {
       // Klik na linię → modal. Implementacja w kroku 16.
       const row = this._findRowByLineAt(x, y);
       if (row) this._openEditLabelModal?.(row);
-    } else if (this.mode === Modes.CALIBRATE) {
-      // Klik 1: dodaj punkt. Klik 2: otwórz modal z dystansem.
-      this.calibrationPoints.push([x, y]);
-      if (this.calibrationPoints.length === 2) {
-        const [p1, p2] = this.calibrationPoints;
-        this._openCalibrationModal?.(p1, p2);
-        this.calibrationPoints = []; // reset; modal lub jego cancel zostawi stary state
-      }
-      this.render();
     }
   }
 
@@ -1181,24 +1172,6 @@ class ImageCanvas {
       }
     }
 
-    // Punkty kalibracji (tylko w trybie CALIBRATE) — krzyżyki + linia podglądu.
-    if (this.mode === Modes.CALIBRATE && this.calibrationPoints.length > 0) {
-      ctx.strokeStyle = "#00FFFF";
-      ctx.lineWidth = 2;
-      for (const [px, py] of this.calibrationPoints) {
-        ctx.beginPath();
-        ctx.moveTo(px - 8, py); ctx.lineTo(px + 8, py);
-        ctx.moveTo(px, py - 8); ctx.lineTo(px, py + 8);
-        ctx.stroke();
-      }
-      if (this.calibrationPoints.length === 2) {
-        const [a, b] = this.calibrationPoints;
-        ctx.beginPath();
-        ctx.moveTo(a[0], a[1]); ctx.lineTo(b[0], b[1]);
-        ctx.stroke();
-      }
-    }
-
     // Warstwa 8: komunikat błędu walidacji na canvasie (gdy etykiety pominięte)
     if (error !== null) {
       ctx.font = "bold 16px sans-serif";
@@ -1323,15 +1296,7 @@ const KEY_TO_MODE = {
   r: Modes.RESIZE,
   d: Modes.DELETE,
   e: Modes.EDIT_LABEL,
-  // Modes.CALIBRATE — celowo bez klawisza w tym etapie. Kalibracja
-  // zostanie zreorganizowana do osobnego sidebar workflow.
 };
-
-/** Wyciąga katalog z pełnej ścieżki pliku (relatywnej do DATA_ROOT). */
-function dirOfPath(path) {
-  const idx = path.lastIndexOf("/");
-  return idx >= 0 ? path.slice(0, idx) : "";
-}
 
 window.addEventListener("DOMContentLoaded", () => {
   _runSmokeTests();
@@ -1360,17 +1325,14 @@ window.addEventListener("DOMContentLoaded", () => {
     $statusCounts.textContent = `Compartment A: ${c.A} rows | Compartment B: ${c.B} rows`;
     $statusError.textContent = imageCanvas.lastError ?? "";
 
-    // Calibration: μm/px + magnification + reference image name.
-    const calib = imageCanvas.calibration;
-    if (calib) {
-      const parts = [];
-      if (calib.magnification) parts.push(calib.magnification);
-      if (calib.reference_image) parts.push(`ref: ${calib.reference_image}`);
-      const suffix = parts.length > 0 ? ` (${parts.join(", ")})` : "";
-      $statusCalibration.textContent = `Calibration: ${calib.um_per_px.toFixed(3)} μm/px${suffix}`;
+    // Active scale: name + μm/px + magnification.
+    const scale = imageCanvas.activeScale;
+    if (scale) {
+      const mag = scale.magnification ? `, ${scale.magnification}` : "";
+      $statusCalibration.textContent = `Scale: ${scale.name} (${scale.um_per_px.toFixed(3)} μm/px${mag})`;
       $statusCalibration.style.color = "";
     } else {
-      $statusCalibration.textContent = "Calibration: NONE";
+      $statusCalibration.textContent = "Scale: NONE";
       $statusCalibration.style.color = "#ffaa44";
     }
   };
@@ -1379,13 +1341,13 @@ window.addEventListener("DOMContentLoaded", () => {
     const hasImage = !!imageCanvas.image;
     const hasOutputDir = destBrowser.getOutputDir() !== null;
     const hasValidRows = imageCanvas.lastError === null && imageCanvas.rows.length > 0;
-    const hasCalibration = !!imageCanvas.calibration;
+    const hasScale = !!imageCanvas.activeScale;
     $btnSwap.disabled = !hasImage;
     $btnSwap.classList.toggle("active", imageCanvas.swapAB);
     $btnClearRows.disabled = !hasImage;
     $btnReload.disabled = !hasImage;
     $btnDetect.disabled = !hasImage;
-    // Crop wymaga: image + destination + ≥1 valid row. Calibration opcjonalna
+    // Crop wymaga: image + destination + ≥1 valid row. Skala opcjonalna
     // (bez niej zapisujemy wycinki bez paska skali).
     $btnCrop.disabled = !hasImage || !hasOutputDir || !hasValidRows;
     $btnCrop.title = !hasImage
@@ -1396,8 +1358,8 @@ window.addEventListener("DOMContentLoaded", () => {
           ? imageCanvas.lastError
           : !hasValidRows
             ? "Add at least one row (key 'l')"
-            : !hasCalibration
-              ? "Crop and save (scale bar omitted — calibrate to add it)"
+            : !hasScale
+              ? "Crop and save (scale bar omitted — select or create a scale)"
               : "Crop and save (Enter)";
   };
 
@@ -1586,34 +1548,249 @@ window.addEventListener("DOMContentLoaded", () => {
   // Wpięcie do ImageCanvas (handler EDIT_LABEL używa optional chaining).
   imageCanvas._openEditLabelModal = openEditLabelModal;
 
-  // Modal kalibracji — wywoływany po 2 klikach w trybie CALIBRATE.
-  const openCalibrationModal = (p1, p2) => {
-    const $backdrop = document.getElementById("calib-backdrop");
-    const $distPreview = document.getElementById("calib-dist-preview");
-    const $length = document.getElementById("calib-length");
-    const $unit = document.getElementById("calib-unit");
-    const $magnification = document.getElementById("calib-magnification");
-    const $error = document.getElementById("calib-error");
-    const $ok = document.getElementById("calib-ok");
-    const $cancel = document.getElementById("calib-cancel");
+  // ===========================================================================
+  // Scale library (sidebar) — biblioteka nazwanych skal + wybór aktywnej
+  // ===========================================================================
+  const $scaleSelect = document.getElementById("scale-select");
+  const $scaleInfo = document.getElementById("scale-info");
+  const $btnNewScale = document.getElementById("btn-new-scale");
+  const $btnDelScale = document.getElementById("btn-del-scale");
+  const ACTIVE_SCALE_KEY = "turbot.activeScaleSlug";
 
-    const distPx = Math.hypot(p2[0] - p1[0], p2[1] - p1[1]);
-    $distPreview.textContent = distPx.toFixed(1);
+  let scaleLibrary = [];
 
-    // Pre-fill z istniejącej kalibracji (jeśli jest).
-    if (imageCanvas.calibration) {
-      $length.value = imageCanvas.calibration.length_um;
-      $magnification.value = imageCanvas.calibration.magnification || "";
-    } else {
-      $length.value = "";
-      $magnification.value = "";
+  const unitLabel = (u) => (u === "um" ? "μm" : u);
+
+  const describeScale = (s) => {
+    if (!s) return "No scale selected";
+    const mag = s.magnification ? `, ${s.magnification}` : "";
+    return `${s.um_per_px.toFixed(3)} μm/px (${s.length_real} ${unitLabel(s.unit)}${mag})`;
+  };
+
+  const rebuildScaleOptions = () => {
+    $scaleSelect.innerHTML = "";
+    const none = document.createElement("option");
+    none.value = "";
+    none.textContent = "— none —";
+    $scaleSelect.appendChild(none);
+    for (const s of scaleLibrary) {
+      const opt = document.createElement("option");
+      opt.value = s.slug;
+      opt.textContent = s.magnification ? `${s.name} · ${s.magnification}` : s.name;
+      $scaleSelect.appendChild(opt);
     }
-    $unit.value = "um";
+  };
+
+  // Ustawia activeScale wg slugu zapisanego w localStorage; aktualizuje UI.
+  const applyActiveScale = () => {
+    const slug = localStorage.getItem(ACTIVE_SCALE_KEY);
+    const found = scaleLibrary.find((s) => s.slug === slug) || null;
+    imageCanvas.activeScale = found;
+    $scaleSelect.value = found ? found.slug : "";
+    $scaleInfo.textContent = describeScale(found);
+    $btnDelScale.disabled = !found;
+    imageCanvas.render();  // odświeża statusbar + przyciski przez onStateChange
+  };
+
+  const loadScaleLibrary = async () => {
+    try {
+      scaleLibrary = await Api.listScales();
+    } catch (e) {
+      console.warn("listScales failed:", e.message);
+      scaleLibrary = [];
+    }
+    rebuildScaleOptions();
+    applyActiveScale();
+  };
+
+  $scaleSelect.addEventListener("change", () => {
+    localStorage.setItem(ACTIVE_SCALE_KEY, $scaleSelect.value);
+    applyActiveScale();
+  });
+
+  $btnDelScale.addEventListener("click", async () => {
+    const slug = $scaleSelect.value;
+    if (!slug) return;
+    const s = scaleLibrary.find((x) => x.slug === slug);
+    if (!confirm(`Delete scale "${s ? s.name : slug}"?`)) return;
+    try {
+      await Api.deleteScale(slug);
+      if (localStorage.getItem(ACTIVE_SCALE_KEY) === slug) {
+        localStorage.removeItem(ACTIVE_SCALE_KEY);
+      }
+      await loadScaleLibrary();
+    } catch (e) {
+      alert(`Delete scale: ${e.message}`);
+    }
+  });
+
+  // ===========================================================================
+  // Scale measurement modal — upload wzorca + 2 kliki + nazwa/długość
+  // ===========================================================================
+  const openScaleModal = () => {
+    const $backdrop = document.getElementById("scale-backdrop");
+    const $file = document.getElementById("scale-file");
+    const $dropzone = document.getElementById("scale-dropzone");
+    const $dropLabel = document.getElementById("scale-dropzone-label");
+    const $canvasWrap = document.getElementById("scale-canvas-wrap");
+    const $canvas = document.getElementById("scale-canvas");
+    const $dist = document.getElementById("scale-dist");
+    const $resetPoints = document.getElementById("scale-reset-points");
+    const $name = document.getElementById("scale-name");
+    const $length = document.getElementById("scale-length");
+    const $unit = document.getElementById("scale-unit");
+    const $magnification = document.getElementById("scale-magnification");
+    const $error = document.getElementById("scale-error");
+    const $ok = document.getElementById("scale-ok");
+    const $cancel = document.getElementById("scale-cancel");
+    const $zoombar = document.getElementById("scale-zoombar");
+    const $zoomIn = document.getElementById("scale-zoom-in");
+    const $zoomOut = document.getElementById("scale-zoom-out");
+    const $zoomFit = document.getElementById("scale-zoom-fit");
+    const $zoomLabel = document.getElementById("scale-zoom-label");
+    const ctx = $canvas.getContext("2d");
+
+    let uploadedPath = null;
+    let previewScale = 1;   // X-Scale wzorca (preview→original)
+    let img = null;
+    let points = [];        // [[x,y]] w przestrzeni preview wzorca
+    let displayScale = 1;   // CSS px na 1 px obrazu (zoom wyświetlania)
+
+    const DROP_DEFAULT = "Click to choose a photo, or drag & drop";
+    $file.value = "";
+    $dropLabel.textContent = DROP_DEFAULT;
+    $canvasWrap.hidden = true;
+    $zoombar.hidden = true;
+    $dist.textContent = "—";
+    $name.value = "";
+    $length.value = "";
+    $unit.value = "cm";
+    $magnification.value = "";
     $error.hidden = true;
     $backdrop.hidden = false;
-    setTimeout(() => $length.focus(), 0);
+
+    const showError = (msg) => { $error.textContent = msg; $error.hidden = false; };
+
+    const draw = () => {
+      if (!img) return;
+      ctx.clearRect(0, 0, $canvas.width, $canvas.height);
+      ctx.drawImage(img, 0, 0);
+      ctx.strokeStyle = "#00FFFF";
+      ctx.lineWidth = 2;
+      for (const [px, py] of points) {
+        ctx.beginPath();
+        ctx.moveTo(px - 8, py); ctx.lineTo(px + 8, py);
+        ctx.moveTo(px, py - 8); ctx.lineTo(px, py + 8);
+        ctx.stroke();
+      }
+      if (points.length === 2) {
+        ctx.beginPath();
+        ctx.moveTo(points[0][0], points[0][1]);
+        ctx.lineTo(points[1][0], points[1][1]);
+        ctx.stroke();
+      }
+    };
+
+    const updateDist = () => {
+      if (points.length === 2) {
+        $dist.textContent = Math.hypot(points[1][0] - points[0][0], points[1][1] - points[0][1]).toFixed(1);
+      } else {
+        $dist.textContent = points.length === 1 ? "click second point" : "—";
+      }
+    };
+
+    // Zoom: sterujemy SZEROKOŚCIĄ WYŚWIETLANIA canvasu (CSS), rozdzielczość
+    // wewnętrzna bez zmian. onCanvasClick przelicza klik o rect.width, więc
+    // współrzędne punktów pozostają poprawne przy dowolnym powiększeniu.
+    const applyZoom = () => {
+      if (!img) return;
+      $canvas.style.maxWidth = "none";
+      $canvas.style.width = `${Math.round(img.width * displayScale)}px`;
+      $canvas.style.height = "auto";
+      $zoomLabel.textContent = `${Math.round(displayScale * 100)}%`;
+    };
+    // Dopasuj do szerokości okna modala (bez powiększania ponad 100%).
+    const setFit = () => {
+      if (!img) return;
+      const avail = $canvasWrap.clientWidth || img.width;
+      displayScale = Math.min(avail / img.width, 1);
+      applyZoom();
+    };
+    const zoomIn = () => { displayScale = Math.min(displayScale * 1.25, 8); applyZoom(); };
+    const zoomOut = () => { displayScale = Math.max(displayScale * 0.8, 0.05); applyZoom(); };
+
+    const loadPreview = async (path) => {
+      const res = await fetch(Api.previewUrl(path));
+      if (!res.ok) throw new ApiError(res.status, await res.json().catch(() => ({})));
+      previewScale = parseFloat(res.headers.get("X-Scale") ?? "1");
+      const blob = await res.blob();
+      const url = URL.createObjectURL(blob);
+      img = await new Promise((resolve, reject) => {
+        const el = new Image();
+        el.onload = () => resolve(el);
+        el.onerror = reject;
+        el.src = url;
+      });
+      $canvas.width = img.width;
+      $canvas.height = img.height;
+      points = [];
+      updateDist();
+      $canvasWrap.hidden = false;
+      $zoombar.hidden = false;
+      setFit();
+      draw();
+    };
+
+    const handleFile = async (fileObj) => {
+      if (!fileObj) return;
+      $error.hidden = true;
+      $dropLabel.textContent = `Uploading ${fileObj.name}…`;
+      try {
+        const { path } = await Api.uploadScalePhoto(fileObj);
+        uploadedPath = path;
+        $dropLabel.textContent = fileObj.name;
+        await loadPreview(path);
+      } catch (e) {
+        showError(`Upload failed: ${e.message}`);
+        $dropLabel.textContent = DROP_DEFAULT;
+      }
+    };
+
+    const onCanvasClick = (e) => {
+      if (!img) return;
+      const rect = $canvas.getBoundingClientRect();
+      const sx = $canvas.width / rect.width;
+      const sy = $canvas.height / rect.height;
+      const x = (e.clientX - rect.left) * sx;
+      const y = (e.clientY - rect.top) * sy;
+      if (points.length >= 2) points = [];  // 3. klik zaczyna od nowa
+      points.push([x, y]);
+      updateDist();
+      draw();
+    };
+
+    const onFileChange = () => handleFile($file.files[0]);
+    const onDropzoneClick = () => $file.click();
+    const onDragOver = (e) => { e.preventDefault(); $dropzone.classList.add("dragover"); };
+    const onDragLeave = () => $dropzone.classList.remove("dragover");
+    const onDrop = (e) => {
+      e.preventDefault();
+      $dropzone.classList.remove("dragover");
+      handleFile(e.dataTransfer.files[0]);
+    };
+    const onResetPoints = () => { points = []; updateDist(); draw(); };
 
     const cleanup = () => {
+      $file.removeEventListener("change", onFileChange);
+      $dropzone.removeEventListener("click", onDropzoneClick);
+      $dropzone.removeEventListener("dragover", onDragOver);
+      $dropzone.removeEventListener("dragleave", onDragLeave);
+      $dropzone.removeEventListener("drop", onDrop);
+      $canvas.removeEventListener("click", onCanvasClick);
+      $resetPoints.removeEventListener("click", onResetPoints);
+      $zoomIn.removeEventListener("click", zoomIn);
+      $zoomOut.removeEventListener("click", zoomOut);
+      $zoomFit.removeEventListener("click", setFit);
       $ok.removeEventListener("click", onOk);
       $cancel.removeEventListener("click", onCancel);
       document.removeEventListener("keydown", onKey);
@@ -1621,51 +1798,55 @@ window.addEventListener("DOMContentLoaded", () => {
     };
 
     const onOk = async () => {
+      if (!uploadedPath) { showError("Upload a ruler photo first"); return; }
+      if (points.length !== 2) { showError("Click two points on the ruler"); return; }
+      const name = $name.value.trim();
+      if (!name) { showError("Enter a name"); return; }
       const raw = parseFloat($length.value);
-      if (!isFinite(raw) || raw <= 0) {
-        $error.textContent = "Enter a positive length";
-        $error.hidden = false;
-        return;
-      }
-      const lengthUm = $unit.value === "mm" ? raw * 1000 : raw;
-      if (!imageCanvas.imagePath) {
-        $error.textContent = "Load an image first";
-        $error.hidden = false;
-        return;
-      }
-      const dir = dirOfPath(imageCanvas.imagePath);
-      const referenceImage = imageCanvas.imagePath.slice(imageCanvas.imagePath.lastIndexOf("/") + 1);
+      if (!isFinite(raw) || raw <= 0) { showError("Enter a positive real length"); return; }
       try {
-        const calib = await Api.saveCalibration({
-          dir,
+        const preset = await Api.createScale({
+          name,
           magnification: $magnification.value || "",
-          reference_image: referenceImage,
-          p1, p2,
-          length_um: lengthUm,
-          scale: imageCanvas.scale,
+          p1: points[0],
+          p2: points[1],
+          length_real: raw,
+          unit: $unit.value,
+          scale: previewScale,
+          source_filename: uploadedPath,
         });
-        imageCanvas.calibration = calib;
+        localStorage.setItem(ACTIVE_SCALE_KEY, preset.slug);
         cleanup();
-        imageCanvas.render();
+        await loadScaleLibrary();
       } catch (e) {
-        $error.textContent = `Save error: ${e.message}`;
-        $error.hidden = false;
+        showError(`Save error: ${e.message}`);
       }
     };
 
     const onCancel = () => { cleanup(); };
 
+    // Tylko Escape zamyka — Enter w polach number/text jest naturalny (user
+    // klika "Save scale"), a Enter-submit kolidowałby z wpisywaniem długości.
     const onKey = (e) => {
-      if (e.key === "Enter")  { e.preventDefault(); onOk(); }
-      else if (e.key === "Escape") { e.preventDefault(); onCancel(); }
+      if (e.key === "Escape") { e.preventDefault(); onCancel(); }
     };
 
+    $file.addEventListener("change", onFileChange);
+    $dropzone.addEventListener("click", onDropzoneClick);
+    $dropzone.addEventListener("dragover", onDragOver);
+    $dropzone.addEventListener("dragleave", onDragLeave);
+    $dropzone.addEventListener("drop", onDrop);
+    $canvas.addEventListener("click", onCanvasClick);
+    $resetPoints.addEventListener("click", onResetPoints);
+    $zoomIn.addEventListener("click", zoomIn);
+    $zoomOut.addEventListener("click", zoomOut);
+    $zoomFit.addEventListener("click", setFit);
     $ok.addEventListener("click", onOk);
     $cancel.addEventListener("click", onCancel);
     document.addEventListener("keydown", onKey);
   };
 
-  imageCanvas._openCalibrationModal = openCalibrationModal;
+  $btnNewScale.addEventListener("click", () => openScaleModal());
 
   // Klawiatura globalna
   document.addEventListener("keydown", (e) => {
@@ -1673,7 +1854,8 @@ window.addEventListener("DOMContentLoaded", () => {
     if (e.target.tagName === "INPUT" || e.target.tagName === "SELECT") return;
     const backdrop = document.getElementById("modal-backdrop");
     const mkdirBackdrop = document.getElementById("mkdir-backdrop");
-    if (!backdrop.hidden || !mkdirBackdrop.hidden) return;
+    const scaleBackdrop = document.getElementById("scale-backdrop");
+    if (!backdrop.hidden || !mkdirBackdrop.hidden || !scaleBackdrop.hidden) return;
 
     const key = e.key.toLowerCase();
     if (key === "w") {
@@ -1697,6 +1879,9 @@ window.addEventListener("DOMContentLoaded", () => {
   updateStatusBar();
   updateActionButtons();
   updateModeButtons();
+
+  // Wczytaj bibliotekę skal i przywróć ostatnio wybraną (z localStorage).
+  loadScaleLibrary();
 
   // Eksport globalny dla debugowania w DevTools.
   window.Turbot = {
