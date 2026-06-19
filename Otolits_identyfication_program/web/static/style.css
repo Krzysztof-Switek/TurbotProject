@@ -23,6 +23,10 @@ button:disabled { opacity: 0.4; cursor: not-allowed; }
 button.primary { background: #2266aa; border-color: #3388cc; }
 button.primary:hover:not(:disabled) { background: #3377bb; }
 button.active { background: #2266aa; border-color: #3388cc; }
+/* Advanced row detection: wyraźny zielony stan ON, szary OFF (jednoznaczny sygnał). */
+#btn-advanced-rows { border-color: #666; }
+#btn-advanced-rows.active { background: #2a8f4e; border-color: #41c46f; color: #fff; font-weight: 600; }
+#btn-advanced-rows.active:hover:not(:disabled) { background: #319a57; }
 input[type="text"] {
   background: #2d2d2d;
   color: #e0e0e0;

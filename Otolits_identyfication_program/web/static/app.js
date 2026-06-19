@@ -170,24 +170,65 @@ function filterOutlierBoxes(boxes, kIqr = 1.5) {
   return boxes.filter(b => b.centerY >= lower && b.centerY <= upper);
 }
 
+// Twardy clamp skosu wierszy (~15°) — wiersze mają być "jak najbardziej poziome".
+const MAX_ROW_SLOPE = 0.27;
+
 /**
- * Klastrowanie boxów w wiersze poziome wewnątrz jednej grupy (np. wycinek).
- * Sekwencyjne: nowy klaster gdy gap między kolejnymi centerY > medianHeight·0.5.
- * Trim do `maxRows` największych klastrów (wg liczby boxów), re-sort po Y.
- * Zwraca tablicę RowLine (linia pozioma na medianie Y klastra, od minX do maxX).
+ * Skos wierszy wycinka = nachylenie głównej osi (PCA) chmury środków boxów.
+ * Wiersze w wycinku są równoległe i mają wspólny skos; pasek bywa lekko przekrzywiony
+ * (czasem w górę, czasem w dół). Zwraca slope clampowany do ±MAX_ROW_SLOPE; n<2 → 0.
+ *
+ * KLUCZOWE: po de-skew (y' = centerY − slope·centerX) wiersze rozdzielają się w Y
+ * nawet gdy w surowym Y nachodzą na siebie (to była przyczyna zlewania 3 wierszy w 1).
  */
-function clusterRowsInGroup(boxes, maxRows = 3) {
+function pcaRowSlope(boxes) {
+  const n = boxes.length;
+  if (n < 2) return 0;
+  let mx = 0, my = 0;
+  for (const b of boxes) { mx += b.centerX; my += b.centerY; }
+  mx /= n; my /= n;
+  let Sxx = 0, Syy = 0, Sxy = 0;
+  for (const b of boxes) {
+    const dx = b.centerX - mx, dy = b.centerY - my;
+    Sxx += dx * dx; Syy += dy * dy; Sxy += dx * dy;
+  }
+  if (Math.abs(Sxy) < 1e-9) return 0;
+  // Kąt głównej osi kowariancji; przy pasku szerszym niż wyższym (Sxx>Syy) jest ~poziomy.
+  const slope = Math.tan(0.5 * Math.atan2(2 * Sxy, Sxx - Syy));
+  if (!Number.isFinite(slope)) return 0;
+  return Math.max(-MAX_ROW_SLOPE, Math.min(MAX_ROW_SLOPE, slope));
+}
+
+/**
+ * Klastrowanie boxów w wiersze wewnątrz jednej grupy (np. wycinek).
+ *
+ * `advanced=false` (DOMYŚLNE, „jak dotąd"): klastrowanie po surowym centerY,
+ * linia POZIOMA na medianie Y klastra (zachowanie bazowe).
+ *
+ * `advanced=true` ("Advanced row detection"):
+ * 1. Oszacuj wspólny skos wierszy (pcaRowSlope) i licz Y "po de-skew" (y'=cy−m·cx).
+ * 2. Klastrowanie po y' poprawnie rozdziela wiersze, nawet gdy w surowym Y nachodzą
+ *    na siebie (przekrzywiony pasek).
+ * 3. Każdy wiersz = linia o WSPÓLNYM skosie m przez centroid → linie równoległe
+ *    (nie przecinają się) i podążają za skosem paska.
+ *
+ * Wspólne: trim do `maxRows` największych klastrów, re-sort top→bottom (po kluczu).
+ */
+function clusterRowsInGroup(boxes, maxRows = 3, advanced = false) {
   if (boxes.length === 0) return [];
 
-  const sorted = [...boxes].sort((a, b) => a.centerY - b.centerY);
+  const m = advanced ? pcaRowSlope(boxes) : 0;
+  const key = b => b.centerY - m * b.centerX;   // OFF: m=0 → key=centerY (oryginał)
+
+  const sorted = [...boxes].sort((a, b) => key(a) - key(b));
   const heights = boxes.map(b => b.height).slice().sort((a, b) => a - b);
   const medianHeight = heights[Math.floor(heights.length / 2)];
   const gapThreshold = Math.max(1, medianHeight * 0.5);
 
-  // Klastrowanie sekwencyjne
+  // Klastrowanie sekwencyjne po y' (de-skew).
   const groups = [[sorted[0]]];
   for (let i = 1; i < sorted.length; i++) {
-    const gap = sorted[i].centerY - sorted[i - 1].centerY;
+    const gap = key(sorted[i]) - key(sorted[i - 1]);
     if (gap > gapThreshold) {
       groups.push([sorted[i]]);
     } else {
@@ -195,21 +236,28 @@ function clusterRowsInGroup(boxes, maxRows = 3) {
     }
   }
 
-  // Trim do maxRows: zostaw `maxRows` największych (wg liczby boxów)
+  // Trim do maxRows: zostaw `maxRows` największych (wg liczby boxów), re-sort top→bottom.
   let selected = groups;
   if (groups.length > maxRows) {
     selected = [...groups].sort((a, b) => b.length - a.length).slice(0, maxRows);
-    // re-sort po Y żeby zachować top→bottom
-    selected.sort((a, b) => a[0].centerY - b[0].centerY);
+    selected.sort((a, b) => key(a[0]) - key(b[0]));
   }
 
-  // Stwórz RowLine dla każdego klastra
   return selected.map(group => {
-    const ys = group.map(b => b.centerY).slice().sort((a, b) => a - b);
-    const medianY = ys[Math.floor(ys.length / 2)];
     const minX = Math.min(...group.map(b => b.x1));
     const maxX = Math.max(...group.map(b => b.x2));
-    return new RowLine([minX, medianY], [maxX, medianY]);
+    if (!advanced) {
+      // OFF: pozioma linia na medianie Y klastra (zachowanie bazowe 1:1).
+      const ys = group.map(b => b.centerY).slice().sort((a, b) => a - b);
+      const medianY = ys[Math.floor(ys.length / 2)];
+      return new RowLine([minX, medianY], [maxX, medianY]);
+    }
+    // ON: równoległa linia o wspólnym skosie m przez centroid klastra.
+    let mxC = 0, myC = 0;
+    for (const b of group) { mxC += b.centerX; myC += b.centerY; }
+    mxC /= group.length; myC /= group.length;
+    const yAt = x => myC + m * (x - mxC);
+    return new RowLine([minX, yAt(minX)], [maxX, yAt(maxX)]);
   });
 }
 
@@ -720,6 +768,9 @@ class ImageCanvas {
     this.lastCounts = { A: 0, B: 0 };
     this.lastError = null;        // err z computeRowLabels, do statusbara
     this.swapAB = false;          // toggle "swap slices" — zamiana liter A↔B
+    // "Advanced row detection" — de-skew skośnych pasków. Flaga na całą sesję
+    // (NIE resetowana przy zmianie obrazu, NIE zapisywana — start zawsze OFF).
+    this.advancedRows = false;
 
     // Aktywna skala z biblioteki (globalna — wybierana w sidebarze, niezależna
     // od katalogu/obrazu). null = brak skali (crop bez paska skali).
@@ -826,10 +877,11 @@ class ImageCanvas {
    * Pipeline:
    * 1. filterOutlierBoxes — odsiej boxy daleko od głównej masy (artefakty).
    * 2. Podziel filtered na A/B przez largest gap Y między centroidami.
-   * 3. clusterRowsInGroup dla A i B (max 3 wiersze per wycinek).
-   * 4. Utwórz Row dla każdej linii, _updateRowBoxes (re-przypisuje WSZYSTKIE
-   *    boxy, więc artefakty mogą trafić do wiersza jeśli linia przecina box —
-   *    to OK, są wtedy w wycinku; outliers Y są poza zasięgiem linii poziomej).
+   * 3. clusterRowsInGroup dla A i B (max 3 wiersze per wycinek; linie dopasowane
+   *    do skosu boxów z clampem + anty-przecięciem).
+   * 4. Utwórz Row dla każdej linii → _reassignAllBoxesToRows (przypisanie
+   *    WYKLUCZAJĄCE: 1 box = 1 wiersz, najbliższa przecinająca linia) →
+   *    odrzuć wiersze bez boxów.
    */
   autoDetectRowsInCompartments() {
     // Idempotentne: zerujemy this.rows ZAWSZE — guard przeciw duplikacji gdy
@@ -868,18 +920,17 @@ class ImageCanvas {
       bBoxes = sorted.slice(splitIdx + 1);
     }
 
-    // Klastruj wewnątrz każdej grupy (max 3 wiersze)
+    // Klastruj wewnątrz każdej grupy (max 3 wiersze); tryb wg flagi advancedRows.
     const lines = [
-      ...clusterRowsInGroup(aBoxes, 3),
-      ...clusterRowsInGroup(bBoxes, 3),
+      ...clusterRowsInGroup(aBoxes, 3, this.advancedRows),
+      ...clusterRowsInGroup(bBoxes, 3, this.advancedRows),
     ];
 
-    // Stwórz Row dla każdej linii
-    for (const line of lines) {
-      const row = new Row(line, { boxes: [] });
-      this._updateRowBoxes(row);
-      if (row.boxes.length > 0) this.rows.push(row);
-    }
+    // Zbuduj wiersze z dopasowanych linii, przypisz boxy wykluczająco (1 box = 1 wiersz),
+    // a następnie odrzuć wiersze, które nie złapały żadnego boxa.
+    this.rows = lines.map(line => new Row(line, { boxes: [] }));
+    this._reassignAllBoxesToRows();
+    this.rows = this.rows.filter(r => r.boxes.length > 0);
     this.render();
   }
 
@@ -916,14 +967,24 @@ class ImageCanvas {
 
   // ---------- przypisania boxów do wierszy ----------
 
-  /** Port _update_row_boxes — przelicza boxes wiersza po edycji linii. */
-  _updateRowBoxes(row) {
-    row.boxes = this.boxes.filter(b => row.intersectsBox(b));
-    row.boxes.sort((a, b) => a.centerX - b.centerX);
-  }
-
+  /**
+   * Przypisanie WYKLUCZAJĄCE: każdy box trafia do co najwyżej jednego wiersza —
+   * tego, którego linia go przecina i jest najbliższa (dystans od środka boxa).
+   * Box nieprzecięty przez żadną linię pozostaje nieprzypisany (poza wierszem).
+   */
   _reassignAllBoxesToRows() {
-    for (const row of this.rows) this._updateRowBoxes(row);
+    for (const row of this.rows) row.boxes = [];
+    for (const box of this.boxes) {
+      let best = null;
+      let bestDist = Infinity;
+      for (const row of this.rows) {
+        if (!row.intersectsBox(box)) continue;
+        const d = row.line.distanceTo(box.centerX, box.centerY);
+        if (d < bestDist) { bestDist = d; best = row; }
+      }
+      if (best) best.boxes.push(box);
+    }
+    for (const row of this.rows) row.boxes.sort((a, b) => a.centerX - b.centerX);
   }
 
   // ---------- event handlers myszy ----------
@@ -1059,10 +1120,12 @@ class ImageCanvas {
     } else if (mode === Modes.ADD_LINE && elem instanceof RowLine) {
       const length = Math.hypot(elem.p2[0] - elem.p1[0], elem.p2[1] - elem.p1[1]);
       if (length >= 10) {
-        // Tworzymy Row z linią + boxami które przecina (port finish_line).
+        // Dodaj wiersz i przypisz boxy wykluczająco (1 box = 1 wiersz). Jeśli nowa
+        // linia nie złapała żadnego boxa, usuń ją (jak dotychczas).
         const row = new Row(elem, { boxes: [] });
-        this._updateRowBoxes(row);
-        if (row.boxes.length > 0) this.rows.push(row);
+        this.rows.push(row);
+        this._reassignAllBoxesToRows();
+        if (row.boxes.length === 0) this.rows = this.rows.filter(r => r !== row);
       }
     }
 
@@ -1265,7 +1328,7 @@ function _runSmokeTests() {
       _mockRow([_mockBox(0, 180, 10, 230)], "A"),
     ];
     const { error } = computeRowLabels(rows);
-    cases.push({ name: "4 forced A → error", pass: error !== null && error.includes("4 wierszy") });
+    cases.push({ name: "4 forced A → error", pass: error !== null && error.includes("4 rows") });
   }
 
   // 7 wierszy global → error
@@ -1274,14 +1337,64 @@ function _runSmokeTests() {
       _mockRow([_mockBox(0, i * 100, 10, i * 100 + 50)])
     );
     const { error } = computeRowLabels(rows);
-    cases.push({ name: "7 wierszy → error", pass: error !== null && error.includes("7 wierszy") });
+    cases.push({ name: "7 wierszy → error", pass: error !== null && error.includes("7 rows") });
+  }
+
+  // 3 wiersze przekrzywione tak, że w SUROWYM Y nachodzą na siebie.
+  const skewedBoxes = () => {
+    const skew = 0.15;
+    const boxes = [];
+    for (const base of [100, 140, 180]) {
+      for (const cx of [0, 100, 200, 300, 400]) {
+        const cy = base + skew * cx;
+        boxes.push(new BBox(cx - 10, cy - 10, cx + 10, cy + 10));
+      }
+    }
+    return boxes;
+  };
+
+  // ADVANCED ON: de-skew odzyskuje 3 wiersze, linie równoległe (bez przecięć).
+  {
+    const lines = clusterRowsInGroup(skewedBoxes(), 3, true);
+    cases.push({ name: "advanced ON: 3 wiersze odzyskane", pass: lines.length === 3 });
+    const slopes = lines.map(l => (l.p2[1] - l.p1[1]) / (l.p2[0] - l.p1[0]));
+    const parallel = slopes.every(s => Math.abs(s - slopes[0]) < 1e-6);
+    cases.push({ name: "advanced ON: wiersze równoległe", pass: parallel && Math.abs(slopes[0]) <= MAX_ROW_SLOPE + 1e-9 });
+  }
+
+  // ADVANCED OFF (domyślne): te same skośne boxy → linie POZIOME (zachowanie bazowe).
+  {
+    const lines = clusterRowsInGroup(skewedBoxes(), 3, false);
+    const allFlat = lines.every(l => Math.abs(l.p1[1] - l.p2[1]) < 1e-6);
+    cases.push({ name: "advanced OFF: linie poziome", pass: allFlat });
+  }
+
+  // OFF na czystym poziomym układzie → 3 wiersze, poziome.
+  {
+    const boxes = [];
+    for (const base of [100, 200, 300]) {
+      for (const cx of [0, 100, 200, 300, 400]) boxes.push(new BBox(cx - 10, base - 10, cx + 10, base + 10));
+    }
+    const lines = clusterRowsInGroup(boxes, 3, false);
+    const slope = (lines[0].p2[1] - lines[0].p1[1]) / (lines[0].p2[0] - lines[0].p1[0]);
+    cases.push({ name: "OFF poziome: 3 wiersze slope≈0", pass: lines.length === 3 && Math.abs(slope) < 1e-6 });
+  }
+
+  // Zabezpieczenie: box przecięty przez 2 linie → trafia do dokładnie 1 (najbliższej).
+  {
+    const b = new BBox(100, 90, 150, 135);            // center y = 112.5
+    const r1 = new Row(new RowLine([0, 100], [300, 100]), { boxes: [] });  // dist 12.5
+    const r2 = new Row(new RowLine([0, 130], [300, 130]), { boxes: [] });  // dist 17.5
+    const fake = { boxes: [b], rows: [r1, r2] };
+    ImageCanvas.prototype._reassignAllBoxesToRows.call(fake);
+    cases.push({ name: "1 box → 1 wiersz", pass: r1.boxes.includes(b) && !r2.boxes.includes(b) });
   }
 
   const failed = cases.filter(c => !c.pass);
   if (failed.length === 0) {
-    console.log("[smoke] computeRowLabels OK (%d/%d tests)", cases.length, cases.length);
+    console.log("[smoke] OK (%d/%d tests)", cases.length, cases.length);
   } else {
-    console.error("[smoke] computeRowLabels FAIL:", failed.map(f => f.name));
+    console.error("[smoke] FAIL:", failed.map(f => f.name));
   }
   return failed.length === 0;
 }
@@ -1310,6 +1423,7 @@ window.addEventListener("DOMContentLoaded", () => {
   const $statusCounts = document.getElementById("status-counts");
   const $statusError = document.getElementById("status-error");
   const $btnSwap = document.getElementById("btn-swap");
+  const $btnAdvancedRows = document.getElementById("btn-advanced-rows");
   const $btnClearRows = document.getElementById("btn-clear-rows");
   const $btnReload = document.getElementById("btn-reload");
   const $btnDetect = document.getElementById("btn-detect");
@@ -1424,6 +1538,22 @@ window.addEventListener("DOMContentLoaded", () => {
     imageCanvas.swapAB = !imageCanvas.swapAB;
     imageCanvas.render();
   });
+
+  // Advanced row detection — przełącznik na całą sesję (domyślnie OFF). ON =
+  // de-skew skośnych pasków, OFF = klasyczne poziome wiersze.
+  const updateAdvancedButton = () => {
+    const on = imageCanvas.advancedRows;
+    $btnAdvancedRows.textContent = `Advanced rows: ${on ? "ON" : "OFF"}`;
+    $btnAdvancedRows.classList.toggle("active", on);
+    $btnAdvancedRows.setAttribute("aria-pressed", String(on));
+  };
+  $btnAdvancedRows.addEventListener("click", () => {
+    imageCanvas.advancedRows = !imageCanvas.advancedRows;
+    updateAdvancedButton();
+    // Natychmiast zastosuj do bieżącego zdjęcia (przeklastruj obecne boxy nowym trybem).
+    if (imageCanvas.imagePath) imageCanvas.autoDetectRowsInCompartments();
+  });
+  updateAdvancedButton();
 
   // Clear rows — soft refresh: zeruje wiersze + komunikat błędu, BOXY
   // zachowane (twoje ręczne usunięcia/edycje boxów pozostają nietknięte).
