@@ -1,44 +1,32 @@
 # Turbot — wycinanie otolitów
 
-Narzędzie webowe (działa w przeglądarce) do **wycinania otolitów ze zdjęć**.
-Program sam znajduje otolity na zdjęciu, układa je w wiersze i dwa wycinki
+Narzędzie webowe do **wycinania otolitów ze zdjęć**.
+Program sam znajduje otolity na zdjęciu, identyfikuje wiersze oraz dwa wycinki
 (górny **A** i dolny **B**), a następnie zapisuje każdy otolit jako osobny
 obrazek PNG — opcjonalnie z paskiem skali.
 
 ---
 
-## Część 1 — Instrukcja dla osoby pracującej przy komputerze
+## Część 1 — Instrukcja dla użytkownika
 
-> Ta część jest dla Ciebie, jeśli siadasz do komputera i masz wyciąć otolity.
-> Zakłada, że program został już uruchomiony przez informatyka (patrz Część 2).
-
-### Jak otworzyć program
-
-Otwórz przeglądarkę (Chrome, Edge, Firefox) i wpisz adres podany przez osobę,
-która uruchomiła program — najczęściej:
-
-```
-http://localhost:8000
-```
-
-Zobaczysz jedno okno podzielone na trzy części:
+Po uruchomieniu programu zobaczysz okno podzielone na trzy części:
 
 - **Lewy panel** — wybór skali oraz przeglądanie folderów (skąd brać zdjęcia
   i gdzie zapisywać wyniki).
 - **Środek** — duży obszar ze zdjęciem oraz pasek przycisków na górze.
 - **Dół** — pasek stanu z informacjami (która skala, ile wierszy, ewentualne błędy).
 
-### Najkrótsza droga: jak wyciąć otolity (krok po kroku)
+### Jak wyciąć otolity (krok po kroku)
 
 1. **Wybierz zdjęcie.** W lewym panelu, w sekcji **Source**, klikaj foldery, aż
    dojdziesz do swoich zdjęć, i kliknij zdjęcie.
 2. **Poczekaj chwilę — program zrobi resztę sam.** Po kliknięciu automatycznie:
    - obrysuje znalezione otolity ramkami,
    - podzieli zdjęcie na wycinek **A** (góra) i **B** (dół),
-   - poukłada otolity w wiersze i podpisze je (`A_1`, `A_2`, `A_3`, `B_1`…),
+   - wyznaczy wiersze i podpisze je (`A_1`, `A_2`, `A_3`, `B_1`…),
    - ramki otolitów, które trafiły do wiersza, robią się **zielone**.
 
-   > **Ważne: program wycina tylko zielone ramki.** Ramka **czerwona** = otolit
+   > **Ważne: program wycina tylko zielone ramki.** Ramka **czerwona** = obiekt (otolit)
    > znaleziony, ale nie przypisany do żadnego wiersza — nie zostanie wycięty.
 
 3. **Sprawdź wynik.** Jeśli wszystko wygląda dobrze (otolity obrysowane,
@@ -46,12 +34,12 @@ Zobaczysz jedno okno podzielone na trzy części:
    — użyj trybów ręcznych (punkt 4).
 4. **Popraw ręcznie (jeśli trzeba).** Kliknij przycisk trybu na górze (albo wciśnij
    klawisz w nawiasie), potem działaj myszką na zdjęciu:
-   - **`b` add box** — domaluj brakującą ramkę: przeciągnij myszką wokół otolitu,
+   - **`b` add box** — dodaj brakującą ramkę: przeciągnij myszką wokół otolitu,
      którego program nie złapał.
    - **`l` add line** — narysuj linię wiersza: przeciągnij ją wzdłuż rzędu otolitów.
      Otolity przecięte linią dołączają do tego wiersza i zmieniają kolor na zielony.
    - **`v` move** — przesuń ramkę lub linię (chwyć i przeciągnij).
-   - **`r` resize** — zmień rozmiar ramki (chwyć za róg i przeciągnij).
+   - **`r` resize** — zmień rozmiar ramki / linii (chwyć i przeciągnij).
    - **`d` del** — usuń ramkę lub linię (kliknij ją).
    - **`e` edit label** — kliknij linię wiersza, aby ręcznie wskazać, czy należy
      do wycinka **A**, **B**, czy ma zdecydować program (`auto`).
@@ -78,15 +66,15 @@ Zobaczysz jedno okno podzielone na trzy części:
 
 **Akcje** (po prawej):
 
-| Przycisk | Co robi |
-|----------|---------|
-| **swap slices** (`w`) | zamienia wycinki miejscami (A↔B) — gdy program odwrotnie rozpoznał górę i dół |
-| **Advanced rows: OFF/ON** | włącz, gdy otolity leżą **na skos** i wiersze się zlewają — program wykryje wtedy pochylone wiersze. Ustawienie działa do zamknięcia programu |
-| **Clear rows** | usuwa wszystkie linie wierszy i komunikat błędu; **ramki zostają** |
-| **Reload** | wczytuje zdjęcie od nowa (ponawia automatyczne wykrywanie, przywraca skasowane ramki) |
-| **Auto-detect (YOLO)** | ponawia automatyczne wykrywanie i dorzuca ramki (przydatne po ręcznych poprawkach) |
-| **Save annotations** (haczyk) | zostaw zaznaczony — zapisuje dane pomocnicze do dalszego uczenia programu |
-| **Crop and save** (`Enter`) | wycina zielone otolity do wybranego folderu |
+| Przycisk                         | Co robi |
+|----------------------------------|---------|
+| **swap slices** (`w`)            | zamienia wycinki miejscami (A↔B) — gdy program odwrotnie rozpoznał górę i dół |
+| **Advanced rows: OFF/ON**        | włącz, gdy otolity leżą **na skos** i wiersze się zlewają — program wykryje wtedy pochylone wiersze. Ustawienie działa do zamknięcia programu |
+| **Clear rows**                   | usuwa wszystkie linie wierszy i komunikat błędu; **ramki zostają** |
+| **Reload**                       | wczytuje zdjęcie od nowa (ponawia automatyczne wykrywanie, przywraca skasowane ramki) |
+| **Auto-detect (YOLO)**           | ponawia automatyczne wykrywanie i dorzuca ramki (przydatne po ręcznych poprawkach) |
+| **Save annotations** (check box) | zostaw zaznaczony — zapisuje dane pomocnicze do dalszego uczenia programu |
+| **Crop and save** (`Enter`)      | wycina zielone otolity do wybranego folderu |
 
 ### Skala — pasek skali na wycinkach (opcjonalnie)
 
@@ -130,7 +118,7 @@ Nazwa każdego pliku mówi, skąd otolit pochodzi, np.:
 
 ---
 
-## Część 2 — Uruchomienie i wdrożenie (dla informatyka)
+## Część 2 — Uruchomienie i wdrożenie
 
 Aplikacja to serwer **FastAPI + Uvicorn** z frontendem w czystym HTML/JS
 (bez kroku budowania). Cały kod jest w `Otolits_identyfication_program/`,
@@ -142,15 +130,6 @@ a wytrenowany model YOLO (`YOLO/weights/best.pt`) jest dołączony do repozytori
 - Zależności w `Otolits_identyfication_program/requirements.txt`
   (FastAPI, Uvicorn, OpenCV-headless, NumPy, Pillow, Ultralytics/YOLO, exifread).
 
-### Instalacja
-
-```powershell
-cd Otolits_identyfication_program
-python -m venv ..\.venv-web
-..\.venv-web\Scripts\python.exe -m pip install -r requirements.txt
-```
-
-(na Linux/macOS analogicznie: `python3 -m venv ../.venv-web` i `source ../.venv-web/bin/activate`)
 
 ### Uruchomienie
 
@@ -190,8 +169,7 @@ logu swoją konfigurację oraz informację, czy model YOLO został wczytany.
 ### Uwagi wdrożeniowe
 
 - Aplikacja jest **bezstanowa** (stan pracy żyje w przeglądarce) i przewidziana
-  dla pojedynczego użytkownika — bez logowania. Do udostępnienia w sieci postaw ją
-  za reverse-proxy / w kontenerze i ogranicz dostęp.
+  dla pojedynczego użytkownika — bez logowania. 
 - Przeglądarka plików operuje na dysku **serwera**, nie komputera użytkownika.
 - Wyniki cropu zapisywane są w katalogu docelowym wskazanym w interfejsie (musi
   leżeć w obrębie `ALLOWED_ROOTS`).
